@@ -1,0 +1,298 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and active workspace preference",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "activeOfficeId": { "type": "string" },
+        "preferredLanguage": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "email", "activeOfficeId", "preferredLanguage", "createdAt", "updatedAt"]
+    },
+    "OfficeInvite": {
+      "title": "OfficeInvite",
+      "description": "Lookup record mapping 6-character invite codes to an office",
+      "type": "object",
+      "properties": {
+        "inviteCode": { "type": "string" },
+        "officeId": { "type": "string" },
+        "officeName": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["inviteCode", "officeId", "officeName", "ownerId", "createdAt"]
+    },
+    "Office": {
+      "title": "Office",
+      "description": "Business workspace configuration, geofence, shift, and payroll rules",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "inviteCode": { "type": "string" },
+        "officeLat": { "type": "number" },
+        "officeLng": { "type": "number" },
+        "geofenceRadiusMeters": { "type": "integer" },
+        "strictGeofenceBlock": { "type": "boolean" },
+        "shiftStartMinutes": { "type": "integer" },
+        "shiftEndMinutes": { "type": "integer" },
+        "lateGraceMinutes": { "type": "integer" },
+        "lateMarksPerHalfDay": { "type": "integer" },
+        "workingDaysPerMonth": { "type": "integer" },
+        "monthEndReportDay": { "type": "integer" },
+        "ownerReportEmail": { "type": "string" },
+        "ownerWhatsappPhone": { "type": "string" },
+        "teaDefaultPriceInr": { "type": "number" },
+        "coffeeDefaultPriceInr": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId", "name", "inviteCode", "officeLat", "officeLng",
+        "geofenceRadiusMeters", "strictGeofenceBlock", "shiftStartMinutes",
+        "shiftEndMinutes", "lateGraceMinutes", "lateMarksPerHalfDay",
+        "workingDaysPerMonth", "monthEndReportDay", "ownerReportEmail",
+        "ownerWhatsappPhone", "teaDefaultPriceInr", "coffeeDefaultPriceInr",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Office team member directory entry and role assignment",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "designation": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "manager", "employee"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "officeId", "ownerId", "displayName", "designation", "role", "active", "createdAt", "updatedAt"]
+    },
+    "PayrollProfile": {
+      "title": "PayrollProfile",
+      "description": "PII-isolated salary configuration and contact info per office member",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "monthlySalaryInr": { "type": "number" },
+        "overtimeHourlyRateInr": { "type": "number" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "officeId", "ownerId", "monthlySalaryInr", "overtimeHourlyRateInr", "phone", "email", "createdAt", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily selfie check-in/out with GPS coordinates, geofence check, and status",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "userName": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "checkInEpochMs": { "type": "integer" },
+        "checkOutEpochMs": { "type": "integer" },
+        "checkInLat": { "type": "number" },
+        "checkInLng": { "type": "number" },
+        "distanceMeters": { "type": "number" },
+        "isOutOfRange": { "type": "boolean" },
+        "isMockLocation": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["on_time", "late", "half_day"] },
+        "lateMinutes": { "type": "integer" },
+        "overtimeMinutes": { "type": "integer" },
+        "selfieBase64": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "officeId", "userName", "dateKey", "checkInEpochMs",
+        "checkOutEpochMs", "checkInLat", "checkInLng", "distanceMeters",
+        "isOutOfRange", "isMockLocation", "status", "lateMinutes",
+        "overtimeMinutes", "selfieBase64", "note", "createdAt", "updatedAt"
+      ]
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "Employee leave application and manager/owner approval record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "userName": { "type": "string" },
+        "leaveType": { "type": "string", "enum": ["casual", "sick", "earned", "half_day", "unpaid"] },
+        "startDateKey": { "type": "string" },
+        "endDateKey": { "type": "string" },
+        "daysCount": { "type": "number" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reviewedBy": { "type": "string" },
+        "reviewNote": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "officeId", "userName", "leaveType", "startDateKey",
+        "endDateKey", "daysCount", "reason", "status", "reviewedBy",
+        "reviewNote", "createdAt", "updatedAt"
+      ]
+    },
+    "SalaryAdjustment": {
+      "title": "SalaryAdjustment",
+      "description": "Monthly salary advance, deduction, or bonus adjustment",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "monthKey": { "type": "string" },
+        "type": { "type": "string", "enum": ["advance", "deduction", "bonus"] },
+        "amountInr": { "type": "number" },
+        "note": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "officeId", "monthKey", "type", "amountInr", "note", "addedBy", "createdAt", "updatedAt"]
+    },
+    "TeaLog": {
+      "title": "TeaLog",
+      "description": "One-tap employee tea or coffee consumption log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officeId": { "type": "string" },
+        "userName": { "type": "string" },
+        "item": { "type": "string", "enum": ["tea", "coffee"] },
+        "quantity": { "type": "integer" },
+        "unitCostInr": { "type": "number" },
+        "dateKey": { "type": "string" },
+        "monthKey": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "officeId", "userName", "item", "quantity", "unitCostInr", "dateKey", "monthKey", "createdAt"]
+    },
+    "TeaPurchase": {
+      "title": "TeaPurchase",
+      "description": "Pantry supply purchase record (milk, sugar, tea powder, etc.)",
+      "type": "object",
+      "properties": {
+        "officeId": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "addedByName": { "type": "string" },
+        "category": { "type": "string", "enum": ["milk", "sugar", "tea_powder", "coffee_powder", "other"] },
+        "quantityLabel": { "type": "string" },
+        "amountInr": { "type": "number" },
+        "dateKey": { "type": "string" },
+        "monthKey": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["officeId", "addedBy", "addedByName", "category", "quantityLabel", "amountInr", "dateKey", "monthKey", "note", "createdAt"]
+    },
+    "OfficeDocument": {
+      "title": "OfficeDocument",
+      "description": "Inward/outward document register record with serial number and scan",
+      "type": "object",
+      "properties": {
+        "officeId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "serialNo": { "type": "string" },
+        "direction": { "type": "string", "enum": ["inward", "outward"] },
+        "dateKey": { "type": "string" },
+        "partyName": { "type": "string" },
+        "subject": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "received", "dispatched", "archived"] },
+        "scanBase64": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "officeId", "createdBy", "createdByName", "serialNo", "direction",
+        "dateKey", "partyName", "subject", "status", "scanBase64", "note",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable office audit trail entry",
+      "type": "object",
+      "properties": {
+        "officeId": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "actionType": { "type": "string" },
+        "summary": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["officeId", "actorUid", "actorName", "actorRole", "actionType", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Authenticated user profile"
+    },
+    "/office_invites/{inviteCode}": {
+      "schema": { "$ref": "#/entities/OfficeInvite" },
+      "description": "Invite code to office lookup"
+    },
+    "/offices/{officeId}": {
+      "schema": { "$ref": "#/entities/Office" },
+      "description": "Office settings and rules"
+    },
+    "/offices/{officeId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/Member" },
+      "description": "Office member roles"
+    },
+    "/offices/{officeId}/payroll_profiles/{memberId}": {
+      "schema": { "$ref": "#/entities/PayrollProfile" },
+      "description": "Salary and PII contact info per member"
+    },
+    "/offices/{officeId}/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Employee attendance check-in/out logs"
+    },
+    "/offices/{officeId}/leaves/{leaveId}": {
+      "schema": { "$ref": "#/entities/LeaveRequest" },
+      "description": "Leave requests and manager approvals"
+    },
+    "/offices/{officeId}/salary_adjustments/{adjustmentId}": {
+      "schema": { "$ref": "#/entities/SalaryAdjustment" },
+      "description": "Salary advances, deductions, and bonuses"
+    },
+    "/offices/{officeId}/tea_logs/{logId}": {
+      "schema": { "$ref": "#/entities/TeaLog" },
+      "description": "One-tap tea and coffee consumption logs"
+    },
+    "/offices/{officeId}/tea_purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/TeaPurchase" },
+      "description": "Pantry supply purchases"
+    },
+    "/offices/{officeId}/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/OfficeDocument" },
+      "description": "Inward/outward document register"
+    },
+    "/offices/{officeId}/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable office audit trail"
+    }
+  }
+}

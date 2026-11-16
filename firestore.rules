@@ -1,0 +1,539 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny (OfficeZen zero-trust Firestore rules)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidInviteCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[A-Z0-9]{6}$');
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isBoundedString(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isTimestampValid(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function memberPath(officeId, uid) {
+      return /databases/$(database)/documents/offices/$(officeId)/members/$(uid);
+    }
+
+    function officePath(officeId) {
+      return /databases/$(database)/documents/offices/$(officeId);
+    }
+
+    function isOfficeMember(officeId) {
+      return isSignedIn() && exists(memberPath(officeId, request.auth.uid)) &&
+        get(memberPath(officeId, request.auth.uid)).data.active == true;
+    }
+
+    function memberRole(officeId) {
+      return get(memberPath(officeId, request.auth.uid)).data.role;
+    }
+
+    function isOfficeOwner(officeId) {
+      return isSignedIn() && (
+        (exists(officePath(officeId)) && get(officePath(officeId)).data.ownerId == request.auth.uid) ||
+        (isOfficeMember(officeId) && memberRole(officeId) == 'owner')
+      );
+    }
+
+    function isOfficeManagerOrOwner(officeId) {
+      return isOfficeOwner(officeId) ||
+        (isOfficeMember(officeId) && (memberRole(officeId) == 'manager' || memberRole(officeId) == 'owner'));
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidUserProfile(data) {
+      return isNonEmptyString(data.userId, 128) &&
+             isNonEmptyString(data.displayName, 100) &&
+             isBoundedString(data.email, 160) &&
+             isBoundedString(data.activeOfficeId, 128) &&
+             isNonEmptyString(data.preferredLanguage, 16) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidOfficeInvite(data) {
+      return isValidInviteCode(data.inviteCode) &&
+             isValidId(data.officeId) &&
+             isNonEmptyString(data.officeName, 80) &&
+             isNonEmptyString(data.ownerId, 128) &&
+             isTimestampValid(data.createdAt);
+    }
+
+    function isValidOffice(data) {
+      return isNonEmptyString(data.ownerId, 128) &&
+             isNonEmptyString(data.name, 80) &&
+             isValidInviteCode(data.inviteCode) &&
+             data.officeLat is number && data.officeLat >= -90 && data.officeLat <= 90 &&
+             data.officeLng is number && data.officeLng >= -180 && data.officeLng <= 180 &&
+             data.geofenceRadiusMeters is int && data.geofenceRadiusMeters >= 20 && data.geofenceRadiusMeters <= 5000 &&
+             data.strictGeofenceBlock is bool &&
+             data.shiftStartMinutes is int && data.shiftStartMinutes >= 0 && data.shiftStartMinutes <= 1439 &&
+             data.shiftEndMinutes is int && data.shiftEndMinutes >= 0 && data.shiftEndMinutes <= 1439 &&
+             data.lateGraceMinutes is int && data.lateGraceMinutes >= 0 && data.lateGraceMinutes <= 120 &&
+             data.lateMarksPerHalfDay is int && data.lateMarksPerHalfDay >= 1 && data.lateMarksPerHalfDay <= 10 &&
+             data.workingDaysPerMonth is int && data.workingDaysPerMonth >= 1 && data.workingDaysPerMonth <= 31 &&
+             data.monthEndReportDay is int && data.monthEndReportDay >= 1 && data.monthEndReportDay <= 31 &&
+             isBoundedString(data.ownerReportEmail, 160) &&
+             isBoundedString(data.ownerWhatsappPhone, 24) &&
+             data.teaDefaultPriceInr is number && data.teaDefaultPriceInr >= 0 && data.teaDefaultPriceInr <= 500 &&
+             data.coffeeDefaultPriceInr is number && data.coffeeDefaultPriceInr >= 0 && data.coffeeDefaultPriceInr <= 500 &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidMember(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.ownerId, 128) &&
+             isNonEmptyString(data.displayName, 100) &&
+             isBoundedString(data.designation, 80) &&
+             data.role in ['owner', 'manager', 'employee'] &&
+             data.active is bool &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidPayrollProfile(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.ownerId, 128) &&
+             data.monthlySalaryInr is number && data.monthlySalaryInr >= 0 && data.monthlySalaryInr <= 10000000 &&
+             data.overtimeHourlyRateInr is number && data.overtimeHourlyRateInr >= 0 && data.overtimeHourlyRateInr <= 50000 &&
+             isBoundedString(data.phone, 24) &&
+             isBoundedString(data.email, 160) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidAttendance(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.userName, 100) &&
+             isNonEmptyString(data.dateKey, 16) &&
+             data.checkInEpochMs is int && data.checkInEpochMs > 0 &&
+             data.checkOutEpochMs is int && data.checkOutEpochMs >= 0 &&
+             data.checkInLat is number && data.checkInLat >= -90 && data.checkInLat <= 90 &&
+             data.checkInLng is number && data.checkInLng >= -180 && data.checkInLng <= 180 &&
+             data.distanceMeters is number && data.distanceMeters >= 0 &&
+             data.isOutOfRange is bool &&
+             data.isMockLocation is bool &&
+             data.isMockLocation == false &&
+             data.status in ['on_time', 'late', 'half_day'] &&
+             data.lateMinutes is int && data.lateMinutes >= 0 && data.lateMinutes <= 1440 &&
+             data.overtimeMinutes is int && data.overtimeMinutes >= 0 && data.overtimeMinutes <= 1440 &&
+             isBoundedString(data.selfieBase64, 250000) &&
+             isBoundedString(data.note, 300) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidLeave(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.userName, 100) &&
+             data.leaveType in ['casual', 'sick', 'earned', 'half_day', 'unpaid'] &&
+             isNonEmptyString(data.startDateKey, 16) &&
+             isNonEmptyString(data.endDateKey, 16) &&
+             data.daysCount is number && data.daysCount > 0 && data.daysCount <= 60 &&
+             isNonEmptyString(data.reason, 400) &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             isBoundedString(data.reviewedBy, 128) &&
+             isBoundedString(data.reviewNote, 300) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidSalaryAdjustment(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.monthKey, 10) &&
+             data.type in ['advance', 'deduction', 'bonus'] &&
+             data.amountInr is number && data.amountInr > 0 && data.amountInr <= 10000000 &&
+             isBoundedString(data.note, 300) &&
+             isNonEmptyString(data.addedBy, 128) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidTeaLog(data, officeId) {
+      return isNonEmptyString(data.userId, 128) &&
+             data.officeId == officeId &&
+             isNonEmptyString(data.userName, 100) &&
+             data.item in ['tea', 'coffee'] &&
+             data.quantity is int && data.quantity >= 1 && data.quantity <= 20 &&
+             data.unitCostInr is number && data.unitCostInr >= 0 && data.unitCostInr <= 500 &&
+             isNonEmptyString(data.dateKey, 16) &&
+             isNonEmptyString(data.monthKey, 10) &&
+             isTimestampValid(data.createdAt);
+    }
+
+    function isValidTeaPurchase(data, officeId) {
+      return data.officeId == officeId &&
+             isNonEmptyString(data.addedBy, 128) &&
+             isNonEmptyString(data.addedByName, 100) &&
+             data.category in ['milk', 'sugar', 'tea_powder', 'coffee_powder', 'other'] &&
+             isNonEmptyString(data.quantityLabel, 60) &&
+             data.amountInr is number && data.amountInr > 0 && data.amountInr <= 1000000 &&
+             isNonEmptyString(data.dateKey, 16) &&
+             isNonEmptyString(data.monthKey, 10) &&
+             isBoundedString(data.note, 300) &&
+             isTimestampValid(data.createdAt);
+    }
+
+    function isValidOfficeDocument(data, officeId) {
+      return data.officeId == officeId &&
+             isNonEmptyString(data.createdBy, 128) &&
+             isNonEmptyString(data.createdByName, 100) &&
+             isNonEmptyString(data.serialNo, 40) &&
+             data.direction in ['inward', 'outward'] &&
+             isNonEmptyString(data.dateKey, 16) &&
+             isNonEmptyString(data.partyName, 120) &&
+             isNonEmptyString(data.subject, 200) &&
+             data.status in ['pending', 'received', 'dispatched', 'archived'] &&
+             isBoundedString(data.scanBase64, 300000) &&
+             isBoundedString(data.note, 400) &&
+             isTimestampValid(data.createdAt) &&
+             isTimestampValid(data.updatedAt);
+    }
+
+    function isValidAuditLog(data, officeId) {
+      return data.officeId == officeId &&
+             isNonEmptyString(data.actorUid, 128) &&
+             isNonEmptyString(data.actorName, 100) &&
+             data.actorRole in ['owner', 'manager', 'employee'] &&
+             isNonEmptyString(data.actionType, 60) &&
+             isNonEmptyString(data.summary, 400) &&
+             isTimestampValid(data.createdAt);
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'email', 'activeOfficeId', 'preferredLanguage', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'activeOfficeId', 'preferredLanguage', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'activeOfficeId', 'preferredLanguage', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /office_invites/{inviteCode} {
+      allow get: if isSignedIn() && isValidInviteCode(inviteCode);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+                       isValidInviteCode(inviteCode) &&
+                       incoming().inviteCode == inviteCode &&
+                       incoming().ownerId == request.auth.uid &&
+                       incoming().keys().hasAll(['inviteCode', 'officeId', 'officeName', 'ownerId', 'createdAt']) &&
+                       incoming().keys().hasOnly(['inviteCode', 'officeId', 'officeName', 'ownerId', 'createdAt']) &&
+                       isValidOfficeInvite(incoming());
+      allow update, delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+    }
+
+    match /offices/{officeId} {
+      allow get: if isSignedIn() && isValidId(officeId) &&
+                    (resource.data.ownerId == request.auth.uid || isOfficeMember(officeId));
+      allow list: if false;
+      allow create: if isSignedIn() &&
+                       isValidId(officeId) &&
+                       incoming().ownerId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'ownerId', 'name', 'inviteCode', 'officeLat', 'officeLng',
+                         'geofenceRadiusMeters', 'strictGeofenceBlock', 'shiftStartMinutes',
+                         'shiftEndMinutes', 'lateGraceMinutes', 'lateMarksPerHalfDay',
+                         'workingDaysPerMonth', 'monthEndReportDay', 'ownerReportEmail',
+                         'ownerWhatsappPhone', 'teaDefaultPriceInr', 'coffeeDefaultPriceInr',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'ownerId', 'name', 'inviteCode', 'officeLat', 'officeLng',
+                         'geofenceRadiusMeters', 'strictGeofenceBlock', 'shiftStartMinutes',
+                         'shiftEndMinutes', 'lateGraceMinutes', 'lateMarksPerHalfDay',
+                         'workingDaysPerMonth', 'monthEndReportDay', 'ownerReportEmail',
+                         'ownerWhatsappPhone', 'teaDefaultPriceInr', 'coffeeDefaultPriceInr',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidOffice(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(officeId) &&
+                       isValidOffice(incoming()) &&
+                       isOfficeOwner(officeId) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'officeLat', 'officeLng', 'geofenceRadiusMeters',
+                         'strictGeofenceBlock', 'shiftStartMinutes', 'shiftEndMinutes',
+                         'lateGraceMinutes', 'lateMarksPerHalfDay', 'workingDaysPerMonth',
+                         'monthEndReportDay', 'ownerReportEmail', 'ownerWhatsappPhone',
+                         'teaDefaultPriceInr', 'coffeeDefaultPriceInr', 'updatedAt'
+                       ]);
+      allow delete: if false;
+
+      match /members/{memberId} {
+        allow get: if isSignedIn() && isValidId(memberId) &&
+                      (request.auth.uid == memberId || isOfficeMember(officeId));
+        allow list: if isSignedIn() &&
+                       (resource.data.userId == request.auth.uid || isOfficeMember(officeId));
+        allow create: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         memberId == incoming().userId &&
+                         exists(officePath(officeId)) &&
+                         incoming().ownerId == get(officePath(officeId)).data.ownerId &&
+                         incoming().keys().hasAll(['userId', 'officeId', 'ownerId', 'displayName', 'designation', 'role', 'active', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'officeId', 'ownerId', 'displayName', 'designation', 'role', 'active', 'createdAt', 'updatedAt']) &&
+                         isValidMember(incoming(), officeId) &&
+                         (
+                           (incoming().userId == request.auth.uid && incoming().ownerId == request.auth.uid && incoming().role == 'owner' && incoming().active == true) ||
+                           (incoming().userId == request.auth.uid && incoming().role == 'employee' && incoming().active == true) ||
+                           (isOfficeOwner(officeId) && incoming().role in ['manager', 'employee'])
+                         );
+        allow update: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         isValidMember(incoming(), officeId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().officeId == existing().officeId &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (isOfficeOwner(officeId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'designation', 'role', 'active', 'updatedAt'])) ||
+                           (request.auth.uid == memberId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']))
+                         );
+        allow delete: if false;
+      }
+
+      match /payroll_profiles/{memberId} {
+        allow get: if isSignedIn() && isValidId(memberId) &&
+                      (request.auth.uid == memberId || isOfficeManagerOrOwner(officeId));
+        allow list: if isSignedIn() &&
+                       (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow create: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         memberId == incoming().userId &&
+                         exists(officePath(officeId)) &&
+                         incoming().ownerId == get(officePath(officeId)).data.ownerId &&
+                         incoming().keys().hasAll(['userId', 'officeId', 'ownerId', 'monthlySalaryInr', 'overtimeHourlyRateInr', 'phone', 'email', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'officeId', 'ownerId', 'monthlySalaryInr', 'overtimeHourlyRateInr', 'phone', 'email', 'createdAt', 'updatedAt']) &&
+                         isValidPayrollProfile(incoming(), officeId) &&
+                         (
+                           isOfficeOwner(officeId) ||
+                           (incoming().userId == request.auth.uid && incoming().monthlySalaryInr == 0 && incoming().overtimeHourlyRateInr == 0)
+                         );
+        allow update: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         isValidPayrollProfile(incoming(), officeId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().officeId == existing().officeId &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (isOfficeOwner(officeId) && incoming().diff(existing()).affectedKeys().hasOnly(['monthlySalaryInr', 'overtimeHourlyRateInr', 'phone', 'email', 'updatedAt'])) ||
+                           (request.auth.uid == memberId && incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'email', 'updatedAt']))
+                         );
+        allow delete: if false;
+      }
+
+      match /attendance/{attendanceId} {
+        allow get: if isSignedIn() && isValidId(attendanceId) &&
+                      (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow list: if isSignedIn() &&
+                       (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow create: if isSignedIn() &&
+                         isValidId(attendanceId) &&
+                         isOfficeMember(officeId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'officeId', 'userName', 'dateKey', 'checkInEpochMs',
+                           'checkOutEpochMs', 'checkInLat', 'checkInLng', 'distanceMeters',
+                           'isOutOfRange', 'isMockLocation', 'status', 'lateMinutes',
+                           'overtimeMinutes', 'selfieBase64', 'note', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'officeId', 'userName', 'dateKey', 'checkInEpochMs',
+                           'checkOutEpochMs', 'checkInLat', 'checkInLng', 'distanceMeters',
+                           'isOutOfRange', 'isMockLocation', 'status', 'lateMinutes',
+                           'overtimeMinutes', 'selfieBase64', 'note', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidAttendance(incoming(), officeId);
+        allow update: if isSignedIn() &&
+                         isValidId(attendanceId) &&
+                         isValidAttendance(incoming(), officeId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().officeId == existing().officeId &&
+                         incoming().dateKey == existing().dateKey &&
+                         incoming().checkInEpochMs == existing().checkInEpochMs &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (request.auth.uid == existing().userId &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['checkOutEpochMs', 'overtimeMinutes', 'note', 'updatedAt'])) ||
+                           (isOfficeManagerOrOwner(officeId) &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lateMinutes', 'overtimeMinutes', 'note', 'checkOutEpochMs', 'updatedAt']))
+                         );
+        allow delete: if false;
+      }
+
+      match /leaves/{leaveId} {
+        allow get: if isSignedIn() && isValidId(leaveId) &&
+                      (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow list: if isSignedIn() &&
+                       (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow create: if isSignedIn() &&
+                         isValidId(leaveId) &&
+                         isOfficeMember(officeId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().status == 'pending' &&
+                         incoming().reviewedBy == '' &&
+                         incoming().keys().hasAll([
+                           'userId', 'officeId', 'userName', 'leaveType', 'startDateKey',
+                           'endDateKey', 'daysCount', 'reason', 'status', 'reviewedBy',
+                           'reviewNote', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'officeId', 'userName', 'leaveType', 'startDateKey',
+                           'endDateKey', 'daysCount', 'reason', 'status', 'reviewedBy',
+                           'reviewNote', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidLeave(incoming(), officeId);
+        allow update: if isSignedIn() &&
+                         isValidId(leaveId) &&
+                         isValidLeave(incoming(), officeId) &&
+                         existing().status == 'pending' &&
+                         incoming().userId == existing().userId &&
+                         incoming().officeId == existing().officeId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isOfficeManagerOrOwner(officeId) &&
+                         (existing().userId != request.auth.uid || isOfficeOwner(officeId)) &&
+                         incoming().status in ['approved', 'rejected'] &&
+                         incoming().reviewedBy == request.auth.uid &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewNote', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /salary_adjustments/{adjustmentId} {
+        allow get: if isSignedIn() && isValidId(adjustmentId) &&
+                      (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow list: if isSignedIn() &&
+                       (resource.data.userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+        allow create: if isSignedIn() &&
+                         isValidId(adjustmentId) &&
+                         isOfficeManagerOrOwner(officeId) &&
+                         incoming().addedBy == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'officeId', 'monthKey', 'type', 'amountInr', 'note', 'addedBy', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'officeId', 'monthKey', 'type', 'amountInr', 'note', 'addedBy', 'createdAt', 'updatedAt']) &&
+                         isValidSalaryAdjustment(incoming(), officeId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(adjustmentId) && isOfficeOwner(officeId);
+      }
+
+      match /tea_logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && isOfficeMember(officeId);
+        allow list: if isSignedIn() && isOfficeMember(officeId);
+        allow create: if isSignedIn() &&
+                         isValidId(logId) &&
+                         isOfficeMember(officeId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'officeId', 'userName', 'item', 'quantity', 'unitCostInr', 'dateKey', 'monthKey', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'officeId', 'userName', 'item', 'quantity', 'unitCostInr', 'dateKey', 'monthKey', 'createdAt']) &&
+                         isValidTeaLog(incoming(), officeId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(logId) &&
+                         (existing().userId == request.auth.uid || isOfficeManagerOrOwner(officeId));
+      }
+
+      match /tea_purchases/{purchaseId} {
+        allow get: if isSignedIn() && isValidId(purchaseId) && isOfficeMember(officeId);
+        allow list: if isSignedIn() && isOfficeMember(officeId);
+        allow create: if isSignedIn() &&
+                         isValidId(purchaseId) &&
+                         isOfficeManagerOrOwner(officeId) &&
+                         incoming().addedBy == request.auth.uid &&
+                         incoming().keys().hasAll(['officeId', 'addedBy', 'addedByName', 'category', 'quantityLabel', 'amountInr', 'dateKey', 'monthKey', 'note', 'createdAt']) &&
+                         incoming().keys().hasOnly(['officeId', 'addedBy', 'addedByName', 'category', 'quantityLabel', 'amountInr', 'dateKey', 'monthKey', 'note', 'createdAt']) &&
+                         isValidTeaPurchase(incoming(), officeId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(purchaseId) && isOfficeOwner(officeId);
+      }
+
+      match /documents/{documentId} {
+        allow get: if isSignedIn() && isValidId(documentId) && isOfficeMember(officeId);
+        allow list: if isSignedIn() && isOfficeMember(officeId);
+        allow create: if isSignedIn() &&
+                         isValidId(documentId) &&
+                         isOfficeMember(officeId) &&
+                         incoming().createdBy == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'officeId', 'createdBy', 'createdByName', 'serialNo', 'direction',
+                           'dateKey', 'partyName', 'subject', 'status', 'scanBase64',
+                           'note', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'officeId', 'createdBy', 'createdByName', 'serialNo', 'direction',
+                           'dateKey', 'partyName', 'subject', 'status', 'scanBase64',
+                           'note', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidOfficeDocument(incoming(), officeId);
+        allow update: if isSignedIn() &&
+                         isValidId(documentId) &&
+                         isOfficeMember(officeId) &&
+                         isValidOfficeDocument(incoming(), officeId) &&
+                         incoming().officeId == existing().officeId &&
+                         incoming().createdBy == existing().createdBy &&
+                         incoming().serialNo == existing().serialNo &&
+                         incoming().createdAt == existing().createdAt &&
+                         (isOfficeManagerOrOwner(officeId) || existing().createdBy == request.auth.uid) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'note', 'subject', 'partyName', 'scanBase64', 'updatedAt']);
+        allow delete: if isSignedIn() && isValidId(documentId) && isOfficeOwner(officeId);
+      }
+
+      match /audit_logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && isOfficeManagerOrOwner(officeId);
+        allow list: if isSignedIn() && isOfficeManagerOrOwner(officeId);
+        allow create: if isSignedIn() &&
+                         isValidId(logId) &&
+                         isOfficeMember(officeId) &&
+                         incoming().actorUid == request.auth.uid &&
+                         incoming().keys().hasAll(['officeId', 'actorUid', 'actorName', 'actorRole', 'actionType', 'summary', 'createdAt']) &&
+                         incoming().keys().hasOnly(['officeId', 'actorUid', 'actorName', 'actorRole', 'actionType', 'summary', 'createdAt']) &&
+                         isValidAuditLog(incoming(), officeId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

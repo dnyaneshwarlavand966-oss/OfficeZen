@@ -22,6 +22,7 @@ dependencyResolutionManagement {
   }
 }
 
+// OfficeZen Android Project
 rootProject.name = "OfficeZen"
 
 include(":app")
