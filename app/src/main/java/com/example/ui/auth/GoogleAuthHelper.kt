@@ -26,6 +26,14 @@ import kotlinx.coroutines.withContext
 object GoogleAuthHelper {
   private const val TAG = "OfficeZenAuth"
 
+  private fun resolveWebClientId(context: Context): String? =
+    try {
+      context.getString(R.string.default_web_client_id).trim().takeIf { it.isNotEmpty() }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to resolve default_web_client_id from Google Services resources", e)
+      null
+    }
+
   fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -37,13 +45,11 @@ object GoogleAuthHelper {
       onAuthSuccess()
       return
     }
-    val clientId =
-      try {
-        context.getString(R.string.default_web_client_id)
-      } catch (_: Exception) {
-        onUnauthenticated()
-        return
-      }
+    val clientId = resolveWebClientId(context)
+    if (clientId == null) {
+      onUnauthenticated()
+      return
+    }
 
     val googleIdOption =
       GetGoogleIdOption.Builder()
@@ -80,13 +86,11 @@ object GoogleAuthHelper {
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {},
   ) {
-    val clientId =
-      try {
-        context.getString(R.string.default_web_client_id)
-      } catch (_: Exception) {
-        onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
-        return
-      }
+    val clientId = resolveWebClientId(context)
+    if (clientId == null) {
+      onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+      return
+    }
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
     val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
