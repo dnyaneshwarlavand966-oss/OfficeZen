@@ -1,0 +1,6 @@
+{
+  "name": "OfficeZen",
+  "description": "Indian small-business office management app with selfie/geofence attendance, automated payroll & PDF payslips, chai/coffee tracker, inward/outward register, leave approvals, audit log, offline cloud sync, and 22 Indian languages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
