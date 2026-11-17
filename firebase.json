@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-android-officeze-7dd93b37-6073-4473-9d46-73f59ebdea79",
+      "database": "officezen-db",
       "rules": "firestore.rules"
     }
   ],
