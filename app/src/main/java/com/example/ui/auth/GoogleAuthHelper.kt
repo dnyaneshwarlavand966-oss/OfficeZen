@@ -22,9 +22,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 object GoogleAuthHelper {
   private const val TAG = "OfficeZenAuth"
+  private const val AUTO_SIGN_IN_TIMEOUT_MS = 8_000L
 
   private fun resolveWebClientId(context: Context): String? =
     try {
@@ -62,12 +64,20 @@ object GoogleAuthHelper {
 
     scope.launch {
       try {
-        val result = credentialManager.getCredential(context, request)
-        val credential = result.credential
-        if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-          val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-          val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-          Firebase.auth.signInWithCredential(authCredential).await()
+        val completed =
+          withTimeoutOrNull(AUTO_SIGN_IN_TIMEOUT_MS) {
+            val result = credentialManager.getCredential(context, request)
+            val credential = result.credential
+            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+              val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+              val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+              Firebase.auth.signInWithCredential(authCredential).await()
+              true
+            } else {
+              false
+            }
+          }
+        if (completed == true) {
           onAuthSuccess()
         } else {
           onUnauthenticated()

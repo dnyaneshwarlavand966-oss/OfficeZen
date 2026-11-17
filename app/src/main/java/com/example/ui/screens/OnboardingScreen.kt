@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +59,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun OnboardingScreen(
   isBusy: Boolean,
+  errorMessage: String? = null,
+  onClearError: () -> Unit = {},
   onCreateOffice: (
     officeName: String,
     ownerPhone: String,
@@ -136,7 +139,10 @@ fun OnboardingScreen(
       SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
         SegmentedButton(
           selected = mode == 0,
-          onClick = { mode = 0 },
+          onClick = {
+            mode = 0
+            onClearError()
+          },
           shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
           modifier = Modifier.testTag("tab_create_office"),
         ) {
@@ -144,11 +150,29 @@ fun OnboardingScreen(
         }
         SegmentedButton(
           selected = mode == 1,
-          onClick = { mode = 1 },
+          onClick = {
+            mode = 1
+            onClearError()
+          },
           shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
           modifier = Modifier.testTag("tab_join_office"),
         ) {
           Text(strings.joinOffice, maxLines = 1)
+        }
+      }
+
+      if (!errorMessage.isNullOrBlank()) {
+        Surface(
+          color = MaterialTheme.colorScheme.errorContainer,
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth().testTag("onboarding_error_banner"),
+        ) {
+          Text(
+            text = errorMessage,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+          )
         }
       }
 
@@ -164,7 +188,10 @@ fun OnboardingScreen(
           if (mode == 0) {
             OutlinedTextField(
               value = officeName,
-              onValueChange = { officeName = it },
+              onValueChange = {
+                officeName = it
+                onClearError()
+              },
               label = { Text("Business / Office Name") },
               placeholder = { Text("e.g., Shree Ganesh Traders") },
               singleLine = true,
@@ -292,7 +319,10 @@ fun OnboardingScreen(
           } else {
             OutlinedTextField(
               value = inviteCode,
-              onValueChange = { inviteCode = it.uppercase().take(6) },
+              onValueChange = {
+                inviteCode = it.uppercase().take(6)
+                onClearError()
+              },
               label = { Text("6-Character Invite Code") },
               placeholder = { Text("e.g., ZEN482") },
               singleLine = true,

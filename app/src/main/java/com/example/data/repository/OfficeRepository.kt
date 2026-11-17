@@ -29,12 +29,14 @@ import com.google.firebase.firestore.PersistentCacheSettings
 import com.google.firebase.firestore.snapshots
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
 class OfficeRepository(
   private val db: FirebaseFirestore,
@@ -289,6 +291,20 @@ class OfficeRepository(
     )
   }
 
+  private suspend fun <T> withFirestoreTimeout(
+    operationName: String,
+    timeoutMs: Long = DEFAULT_OPERATION_TIMEOUT_MS,
+    block: suspend () -> T,
+  ): T =
+    try {
+      withTimeout(timeoutMs) { block() }
+    } catch (e: TimeoutCancellationException) {
+      throw IllegalStateException(
+        "$operationName timed out. Check your internet connection and verify Firestore database 'officezen-db' is active.",
+        e,
+      )
+    }
+
   suspend fun ensureUserProfile(
     displayName: String,
     email: String,
@@ -296,23 +312,34 @@ class OfficeRepository(
   ): Result<UserProfile> = runCatching {
     val uid = requireUserId()
     val docRef = db.collection("users").document(uid)
-    val existing = docRef.get().await().toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+    val existing =
+      try {
+        withFirestoreTimeout("Load user profile") {
+          docRef.get().await().toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.GET, docRef.path)
+        throw e
+      }
     if (existing != null) {
       return@runCatching existing
     }
     val safeName = displayName.ifBlank { email.substringBefore("@").ifBlank { "Office Member" } }.take(100)
+    val safeLang = preferredLanguage.ifBlank { "en" }.take(16)
     val payload =
       mapOf(
         "userId" to uid,
         "displayName" to safeName,
         "email" to email.take(160),
         "activeOfficeId" to "",
-        "preferredLanguage" to preferredLanguage.ifBlank { "en" }.take(16),
+        "preferredLanguage" to safeLang,
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp(),
       )
     try {
-      docRef.set(payload).await()
+      withFirestoreTimeout("Create user profile") { docRef.set(payload).await() }
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -325,7 +352,7 @@ class OfficeRepository(
       displayName = safeName,
       email = email,
       activeOfficeId = "",
-      preferredLanguage = preferredLanguage,
+      preferredLanguage = safeLang,
     )
   }
 
@@ -361,8 +388,23 @@ class OfficeRepository(
     shiftEndMinutes: Long,
     lateGraceMinutes: Long,
     workingDaysPerMonth: Long,
+    preferredLanguage: String = "en",
   ): Result<Office> = runCatching {
     val uid = requireUserId()
+    val trimmedOfficeName = officeName.trim().take(80)
+    require(trimmedOfficeName.isNotEmpty()) { "Please enter an office name." }
+    val safeName = ownerDisplayName.ifBlank { "Owner" }.take(100)
+    val userRef = db.collection("users").document(uid)
+    val userExists =
+      try {
+        withFirestoreTimeout("Check user profile") { userRef.get().await().exists() }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.GET, userRef.path)
+        throw e
+      }
+
     val officeId = "off_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val inviteCode = generateInviteCode()
     val officeRef = db.collection("offices").document(officeId)
@@ -389,7 +431,7 @@ class OfficeRepository(
         "updatedAt" to FieldValue.serverTimestamp(),
       )
     try {
-      officeRef.set(officePayload).await()
+      withFirestoreTimeout("Create office") { officeRef.set(officePayload).await() }
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -397,11 +439,9 @@ class OfficeRepository(
       throw e
     }
 
-    val safeName = ownerDisplayName.ifBlank { "Owner" }.take(100)
     val inviteRef = db.collection("office_invites").document(inviteCode)
     val memberRef = officeRef.collection("members").document(uid)
     val payrollRef = officeRef.collection("payroll_profiles").document(uid)
-    val userRef = db.collection("users").document(uid)
 
     val batch = db.batch()
     batch.set(
@@ -442,15 +482,30 @@ class OfficeRepository(
         "updatedAt" to FieldValue.serverTimestamp(),
       ),
     )
-    batch.update(
-      userRef,
-      mapOf(
-        "activeOfficeId" to officeId,
-        "updatedAt" to FieldValue.serverTimestamp(),
-      ),
-    )
+    if (userExists) {
+      batch.update(
+        userRef,
+        mapOf(
+          "activeOfficeId" to officeId,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      )
+    } else {
+      batch.set(
+        userRef,
+        mapOf(
+          "userId" to uid,
+          "displayName" to safeName,
+          "email" to ownerEmail.trim().take(160),
+          "activeOfficeId" to officeId,
+          "preferredLanguage" to preferredLanguage.ifBlank { "en" }.take(16),
+          "createdAt" to FieldValue.serverTimestamp(),
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      )
+    }
     try {
-      batch.commit().await()
+      withFirestoreTimeout("Setup office workspace") { batch.commit().await() }
       appendAuditLog(
         officeId = officeId,
         actorUid = uid,
@@ -489,6 +544,7 @@ class OfficeRepository(
     email: String,
     phone: String,
     designation: String,
+    preferredLanguage: String = "en",
   ): Result<String> = runCatching {
     val uid = requireUserId()
     val code = rawCode.trim().uppercase()
@@ -496,7 +552,9 @@ class OfficeRepository(
     val inviteRef = db.collection("office_invites").document(code)
     val invite =
       try {
-        inviteRef.get().await().toObject(OfficeInvite::class.java, ServerTimestampBehavior.ESTIMATE)
+        withFirestoreTimeout("Lookup invite code") {
+          inviteRef.get().await().toObject(OfficeInvite::class.java, ServerTimestampBehavior.ESTIMATE)
+        }
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
@@ -508,7 +566,31 @@ class OfficeRepository(
     val safeName = displayName.ifBlank { "Employee" }.take(100)
     val officeRef = db.collection("offices").document(officeId)
     val memberRef = officeRef.collection("members").document(uid)
-    val existingMember = memberRef.get().await()
+    val userRef = db.collection("users").document(uid)
+
+    val existingMember =
+      try {
+        withFirestoreTimeout("Check office membership") { memberRef.get().await() }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.GET, memberRef.path)
+        throw e
+      }
+
+    if (existingMember.exists() && existingMember.getBoolean("active") == false) {
+      throw IllegalStateException("Your membership in this office is inactive. Contact the office owner.")
+    }
+
+    val userExists =
+      try {
+        withFirestoreTimeout("Check user profile") { userRef.get().await().exists() }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.GET, userRef.path)
+        throw e
+      }
 
     val batch = db.batch()
     val isNewMember = !existingMember.exists()
@@ -542,15 +624,30 @@ class OfficeRepository(
         ),
       )
     }
-    batch.update(
-      db.collection("users").document(uid),
-      mapOf(
-        "activeOfficeId" to officeId,
-        "updatedAt" to FieldValue.serverTimestamp(),
-      ),
-    )
+    if (userExists) {
+      batch.update(
+        userRef,
+        mapOf(
+          "activeOfficeId" to officeId,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      )
+    } else {
+      batch.set(
+        userRef,
+        mapOf(
+          "userId" to uid,
+          "displayName" to safeName,
+          "email" to email.trim().take(160),
+          "activeOfficeId" to officeId,
+          "preferredLanguage" to preferredLanguage.ifBlank { "en" }.take(16),
+          "createdAt" to FieldValue.serverTimestamp(),
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ),
+      )
+    }
     try {
-      batch.commit().await()
+      withFirestoreTimeout("Join office") { batch.commit().await() }
       if (isNewMember) {
         appendAuditLog(
           officeId = officeId,
@@ -654,7 +751,15 @@ class OfficeRepository(
         "updatedAt" to FieldValue.serverTimestamp(),
       ),
     )
-    val payrollSnap = payrollRef.get().await()
+    val payrollSnap =
+      try {
+        payrollRef.get().await()
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        handleFirestoreError(e, OperationType.GET, payrollRef.path)
+        throw e
+      }
     if (payrollSnap.exists()) {
       batch.update(
         payrollRef,
@@ -1125,8 +1230,33 @@ class OfficeRepository(
   }
 
   companion object {
+    private const val DEFAULT_OPERATION_TIMEOUT_MS = 20_000L
+
+    fun friendlyErrorMessage(error: Throwable, fallback: String): String {
+      val firestoreError =
+        generateSequence(error) { it.cause }
+          .filterIsInstance<FirebaseFirestoreException>()
+          .firstOrNull()
+      if (firestoreError != null) {
+        return when (firestoreError.code) {
+          FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+            "Firestore permission denied on database 'officezen-db'. Verify Firestore security rules are deployed and your account is signed in."
+          FirebaseFirestoreException.Code.NOT_FOUND ->
+            "Firestore database 'officezen-db' or requested document was not found."
+          FirebaseFirestoreException.Code.UNAVAILABLE,
+          FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
+            "Unable to reach Firestore ('officezen-db'). Check internet connection and try again."
+          FirebaseFirestoreException.Code.UNAUTHENTICATED ->
+            "Google Sign-In session expired. Please sign in again."
+          else -> firestoreError.localizedMessage ?: fallback
+        }
+      }
+      return error.localizedMessage?.takeIf { it.isNotBlank() } ?: fallback
+    }
+
     private fun createConfiguredFirestore(appContext: Context): FirebaseFirestore {
-      val dbId = appContext.getString(R.string.firestore_database_id)
+      val dbId = appContext.getString(R.string.firestore_database_id).trim()
+      require(dbId.isNotEmpty()) { "firestore_database_id must not be empty" }
       val instance = FirebaseFirestore.getInstance(dbId)
       try {
         instance.firestoreSettings =

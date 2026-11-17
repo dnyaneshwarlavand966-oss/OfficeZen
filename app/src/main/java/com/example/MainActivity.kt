@@ -31,6 +31,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -207,7 +208,10 @@ private fun AuthenticatedOfficeApp(
     }
 
   val userProfileState by viewModel.userProfileState.collectAsStateWithLifecycle()
-  val office by viewModel.officeState.collectAsStateWithLifecycle()
+  val officeState by viewModel.officeState.collectAsStateWithLifecycle()
+  val office = (officeState as? UiState.Success)?.data
+  val onboardingError by viewModel.onboardingError.collectAsStateWithLifecycle()
+  val profileSyncError by viewModel.profileSyncError.collectAsStateWithLifecycle()
   val me by viewModel.myMemberState.collectAsStateWithLifecycle()
   val members by viewModel.membersState.collectAsStateWithLifecycle()
   val payrollProfiles by viewModel.payrollProfilesState.collectAsStateWithLifecycle()
@@ -321,42 +325,86 @@ private fun AuthenticatedOfficeApp(
     ) {
       when (val profileState = userProfileState) {
         UiState.Loading -> {
-          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+          val syncErr = profileSyncError
+          if (syncErr != null) {
+            FirestoreErrorPane(
+              message = syncErr,
+              primaryActionLabel = "Retry",
+              onPrimaryAction = { viewModel.retryConnection() },
+              secondaryActionLabel = strings.signOut,
+              onSecondaryAction = onSignOut,
+            )
+          } else {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+              CircularProgressIndicator()
+            }
           }
         }
 
         is UiState.Error -> {
-          Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-          ) {
-            Text(
-              text = profileState.message,
-              style = MaterialTheme.typography.bodyLarge,
-              color = MaterialTheme.colorScheme.error,
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onSignOut) { Text(strings.signOut) }
-          }
+          FirestoreErrorPane(
+            message = profileState.message,
+            primaryActionLabel = "Retry",
+            onPrimaryAction = { viewModel.retryConnection() },
+            secondaryActionLabel = strings.signOut,
+            onSecondaryAction = onSignOut,
+          )
         }
 
         is UiState.Success -> {
-          val activeOfficeId = profileState.data?.activeOfficeId.orEmpty()
-          val activeOffice = office
-          if (activeOfficeId.isBlank() || activeOffice == null) {
-            OnboardingScreen(
-              isBusy = isBusy,
-              onCreateOffice = { name, phone, lat, lng, radius, startM, endM, graceM, days ->
-                viewModel.createOffice(name, phone, lat, lng, radius, startM, endM, graceM, days)
-              },
-              onJoinOffice = { code, desig, phone ->
-                viewModel.joinOffice(code, desig, phone)
-              },
+          val syncErr = profileSyncError
+          if (profileState.data == null && syncErr != null) {
+            FirestoreErrorPane(
+              message = syncErr,
+              primaryActionLabel = "Retry",
+              onPrimaryAction = { viewModel.retryConnection() },
+              secondaryActionLabel = strings.signOut,
+              onSecondaryAction = onSignOut,
             )
           } else {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val activeOfficeId = profileState.data?.activeOfficeId.orEmpty()
+            if (activeOfficeId.isBlank()) {
+              OnboardingScreen(
+                isBusy = isBusy,
+                errorMessage = onboardingError,
+                onClearError = { viewModel.clearOnboardingError() },
+                onCreateOffice = { name, phone, lat, lng, radius, startM, endM, graceM, days ->
+                  viewModel.createOffice(name, phone, lat, lng, radius, startM, endM, graceM, days)
+                },
+                onJoinOffice = { code, desig, phone ->
+                  viewModel.joinOffice(code, desig, phone)
+                },
+              )
+            } else {
+              when (val currentOfficeState = officeState) {
+                UiState.Loading -> {
+                  Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                  }
+                }
+
+                is UiState.Error -> {
+                  FirestoreErrorPane(
+                    message = currentOfficeState.message,
+                    primaryActionLabel = "Retry",
+                    onPrimaryAction = { viewModel.retryConnection() },
+                    secondaryActionLabel = "Switch Workspace",
+                    onSecondaryAction = { viewModel.switchWorkspace() },
+                  )
+                }
+
+                is UiState.Success -> {
+                  val activeOffice = currentOfficeState.data
+                  if (activeOffice == null) {
+                    FirestoreErrorPane(
+                      message = "Office workspace not found or access was removed.",
+                      primaryActionLabel = "Retry",
+                      onPrimaryAction = { viewModel.retryConnection() },
+                      secondaryActionLabel = "Switch Workspace",
+                      onSecondaryAction = { viewModel.switchWorkspace() },
+                    )
+                  } else {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
               val useRail = maxWidth >= 600.dp
               Row(modifier = Modifier.fillMaxSize()) {
                 if (useRail) {
@@ -502,8 +550,48 @@ private fun AuthenticatedOfficeApp(
                 }
               }
             }
+                  }
+                }
+              }
+            }
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun FirestoreErrorPane(
+  message: String,
+  primaryActionLabel: String,
+  onPrimaryAction: () -> Unit,
+  secondaryActionLabel: String,
+  onSecondaryAction: () -> Unit,
+) {
+  Column(
+    modifier = Modifier.fillMaxSize().padding(24.dp),
+    verticalArrangement = Arrangement.Center,
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Text(
+      text = message,
+      style = MaterialTheme.typography.bodyLarge,
+      color = MaterialTheme.colorScheme.error,
+    )
+    Spacer(Modifier.height(16.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      Button(
+        onClick = onPrimaryAction,
+        modifier = Modifier.testTag("retry_firestore_button"),
+      ) {
+        Text(primaryActionLabel)
+      }
+      OutlinedButton(
+        onClick = onSecondaryAction,
+        modifier = Modifier.testTag("secondary_error_action_button"),
+      ) {
+        Text(secondaryActionLabel)
       }
     }
   }

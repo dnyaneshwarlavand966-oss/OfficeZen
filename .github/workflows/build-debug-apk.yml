@@ -104,9 +104,22 @@ jobs:
               sys.exit(1)
 
           expected_pkg = "com.aistudio.officezen.kzmrxp"
+          expected_project = "officezen-d42ad"
           project_id = data.get("project_info", {}).get("project_id", "")
           if not project_id or "remixed" in project_id.lower() or "dummy" in project_id.lower():
               print(f"::error::Invalid Firebase project_id in app/google-services.json: {project_id!r}")
+              sys.exit(1)
+          if project_id != expected_project:
+              print(
+                  f"::error::app/google-services.json targets Firebase project '{project_id}', "
+                  f"expected '{expected_project}'. Update the GOOGLE_SERVICES_JSON GitHub secret with the latest app/google-services.json."
+              )
+              sys.exit(1)
+
+          with open("app/src/main/res/values/firebase_applet_config.xml", "r", encoding="utf-8") as cfg_f:
+              cfg_xml = cfg_f.read()
+          if "officezen-db" not in cfg_xml:
+              print("::error::firebase_applet_config.xml is missing Firestore database ID 'officezen-db'.")
               sys.exit(1)
 
           clients = data.get("client") or []
@@ -139,7 +152,7 @@ jobs:
               )
               sys.exit(1)
 
-          print(f"Validated app/google-services.json (project_id={project_id}, package={expected_pkg}, oauth_web_clients={len(web_clients)}).")
+          print(f"Validated app/google-services.json (project_id={project_id}, db=officezen-db, package={expected_pkg}, oauth_web_clients={len(web_clients)}).")
           PY
 
       - name: Setup Gradle

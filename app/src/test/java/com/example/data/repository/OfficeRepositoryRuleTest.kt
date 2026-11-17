@@ -215,6 +215,62 @@ class OfficeRepositoryRuleTest : FirestoreEmulatorTestBase() {
   }
 
   @Test
+  fun createAndJoinOffice_withoutPreexistingUserDoc_succeedsAndSetsActiveOffice() = runBlocking {
+    val suffix = UUID.randomUUID().toString().take(6)
+    val ownerEmail = "fresh_owner_$suffix@test.com"
+    val staffEmail = "fresh_staff_$suffix@test.com"
+
+    signInTestUser(ownerEmail)
+    val ownerRepo = OfficeRepository(firestore, auth)
+    val office =
+      withTimeout(DEFAULT_TIMEOUT_MS) {
+        ownerRepo
+          .createOffice(
+            officeName = "Fresh Desk $suffix",
+            ownerDisplayName = "Fresh Owner",
+            ownerEmail = ownerEmail,
+            ownerPhone = "+919800000001",
+            officeLat = 19.076,
+            officeLng = 72.8777,
+            geofenceRadiusMeters = 150L,
+            shiftStartMinutes = 570L,
+            shiftEndMinutes = 1110L,
+            lateGraceMinutes = 15L,
+            workingDaysPerMonth = 26L,
+            preferredLanguage = "mr",
+          )
+          .getOrThrow()
+      }
+    val ownerProfile =
+      withTimeout(FLOW_TIMEOUT_MS) {
+        ownerRepo.observeUserProfile(auth.currentUser!!.uid).first()
+      }
+    assertEquals(office.id, ownerProfile?.activeOfficeId)
+
+    signInTestUser(staffEmail)
+    val staffRepo = OfficeRepository(firestore, auth)
+    val joinedId =
+      withTimeout(DEFAULT_TIMEOUT_MS) {
+        staffRepo
+          .joinOfficeByInviteCode(
+            rawCode = office.inviteCode,
+            displayName = "Fresh Staff",
+            email = staffEmail,
+            phone = "9800000002",
+            designation = "Clerk",
+            preferredLanguage = "mr",
+          )
+          .getOrThrow()
+      }
+    assertEquals(office.id, joinedId)
+    val staffProfile =
+      withTimeout(FLOW_TIMEOUT_MS) {
+        staffRepo.observeUserProfile(auth.currentUser!!.uid).first()
+      }
+    assertEquals(office.id, staffProfile?.activeOfficeId)
+  }
+
+  @Test
   fun observeMembers_unauthenticatedUser_failsWithPermissionDenied() = runBlocking {
     auth.signOut()
     val repo = OfficeRepository(firestore, auth)

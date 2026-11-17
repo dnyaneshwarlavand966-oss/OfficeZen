@@ -1,0 +1,57 @@
+name: Deploy Firestore Security Rules
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-rules:
+    name: Validate & Deploy firestore.rules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify zero-trust rules (reject open read/write)
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          import sys
+
+          with open("firebase.json", "r", encoding="utf-8") as f:
+              cfg = json.load(f)
+
+          fs_cfg = cfg.get("firestore", [])
+          if isinstance(fs_cfg, dict):
+              fs_cfg = [fs_cfg]
+          dbs = [entry.get("database") for entry in fs_cfg]
+          if "officezen-db" not in dbs:
+              print(f"::error::firebase.json must configure database 'officezen-db'. Found: {dbs}")
+              sys.exit(1)
+
+          with open("firestore.rules", "r", encoding="utf-8") as f:
+              rules = f.read()
+
+          if re.search(r"allow\s+(read|write|read\s*,\s*write)\s*:\s*if\s+true\b", rules):
+              print("::error::Open Firestore rules ('if true') detected! Deployment aborted.")
+              sys.exit(1)
+
+          print("Verified firebase.json targets 'officezen-db' and firestore.rules contains no open rules.")
+          PY
+
+      - name: Authenticate & Deploy Firestore Rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::Missing GitHub Actions secret FIREBASE_SERVICE_ACCOUNT. Create a Firebase/GCP service account JSON with 'Firebase Rules Admin' (roles/firebaserules.admin) and add it as repository secret FIREBASE_SERVICE_ACCOUNT."
+            exit 1
+          fi
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > /tmp/firebase-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-sa.json
+          npx --yes firebase-tools@latest deploy --only firestore:rules --project officezen-d42ad --non-interactive
+          rm -f /tmp/firebase-sa.json
