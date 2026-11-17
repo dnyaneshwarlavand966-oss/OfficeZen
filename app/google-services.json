@@ -12,7 +12,20 @@
           "package_name": "com.aistudio.officezen.kzmrxp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "147077394585-ovg1elp1i9tb8aspidgu53lv1mtr797o.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.officezen.kzmrxp",
+            "certificate_hash": "36e6acb949e1780474f667c139d0bcb806ec101a"
+          }
+        },
+        {
+          "client_id": "147077394585-fvttjo1327j6febch6o1q8mtc68qehc9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCMOjncMq4Cp1PVS-aSpUTqO_eEff5mB4o"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "147077394585-fvttjo1327j6febch6o1q8mtc68qehc9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
