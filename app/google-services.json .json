@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "147077394585",
+    "project_id": "officezen-d42ad",
+    "storage_bucket": "officezen-d42ad.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:147077394585:android:76d286378fba76a4f68808",
+        "android_client_info": {
+          "package_name": "com.aistudio.officezen.kzmrxp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCMOjncMq4Cp1PVS-aSpUTqO_eEff5mB4o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
