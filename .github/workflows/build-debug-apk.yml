@@ -46,17 +46,94 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          if [ ! -f app/google-services.json ]; then
-            if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-              printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-              printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
-            fi
-          fi
-          if [ ! -f app/google-services.json ]; then
-            echo "::error::app/google-services.json is missing from the repository. Commit app/google-services.json or add a GOOGLE_SERVICES_JSON repository secret so the Google Services plugin can generate R.string.default_web_client_id."
-            exit 1
-          fi
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+
+          target = "app/google-services.json"
+          raw_secret = os.environ.get("GOOGLE_SERVICES_JSON", "").strip()
+          b64_secret = os.environ.get("GOOGLE_SERVICES_JSON_BASE64", "").strip()
+
+          if not os.path.exists(target):
+              if raw_secret:
+                  content = raw_secret
+                  if not content.lstrip().startswith("{"):
+                      try:
+                          content = base64.b64decode("".join(content.split())).decode("utf-8")
+                      except Exception as exc:
+                          print(f"::error::GOOGLE_SERVICES_JSON secret is neither valid JSON nor valid base64: {exc}")
+                          sys.exit(1)
+                  with open(target, "w", encoding="utf-8") as f:
+                      f.write(content.rstrip() + "\n")
+                  print("Restored app/google-services.json from GOOGLE_SERVICES_JSON secret.")
+              elif b64_secret:
+                  try:
+                      content = base64.b64decode("".join(b64_secret.split())).decode("utf-8")
+                  except Exception as exc:
+                      print(f"::error::Failed to decode GOOGLE_SERVICES_JSON_BASE64 secret: {exc}")
+                      sys.exit(1)
+                  with open(target, "w", encoding="utf-8") as f:
+                      f.write(content.rstrip() + "\n")
+                  print("Restored app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret.")
+              else:
+                  print(
+                      "::error::Missing app/google-services.json and GitHub Actions secret GOOGLE_SERVICES_JSON is not set.\n"
+                      "How to configure it:\n"
+                      "1. Open your GitHub repository -> Settings -> Secrets and variables -> Actions.\n"
+                      "2. Click 'New repository secret'.\n"
+                      "3. Set Name to: GOOGLE_SERVICES_JSON\n"
+                      "4. Copy the full JSON contents of app/google-services.json from your AI Studio project and paste it as the secret Value.\n"
+                      "5. Save the secret and re-run the 'Build Debug APK' workflow."
+                  )
+                  sys.exit(1)
+
+          try:
+              with open(target, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+          except Exception as exc:
+              print(f"::error::app/google-services.json is not valid JSON: {exc}")
+              sys.exit(1)
+
+          expected_pkg = "com.aistudio.officezen.kzmrxp"
+          project_id = data.get("project_info", {}).get("project_id", "")
+          if not project_id or "remixed" in project_id.lower() or "dummy" in project_id.lower():
+              print(f"::error::Invalid Firebase project_id in app/google-services.json: {project_id!r}")
+              sys.exit(1)
+
+          clients = data.get("client") or []
+          matching_clients = [
+              c for c in clients
+              if c.get("client_info", {}).get("android_client_info", {}).get("package_name") == expected_pkg
+          ]
+          if not matching_clients:
+              found = [
+                  c.get("client_info", {}).get("android_client_info", {}).get("package_name")
+                  for c in clients
+              ]
+              print(f"::error::app/google-services.json does not contain package {expected_pkg}. Found: {found}")
+              sys.exit(1)
+
+          client = matching_clients[0]
+          oauth_clients = list(client.get("oauth_client") or [])
+          other_clients = list(
+              client.get("services", {}).get("appinvite_service", {}).get("other_platform_oauth_client") or []
+          )
+          web_clients = [
+              o.get("client_id", "")
+              for o in (oauth_clients + other_clients)
+              if o.get("client_type") == 3 and o.get("client_id")
+          ]
+          if not web_clients:
+              print(
+                  "::error::app/google-services.json does not contain an OAuth web client (client_type: 3). "
+                  "R.string.default_web_client_id cannot be generated without it."
+              )
+              sys.exit(1)
+
+          print(f"Validated app/google-services.json (project_id={project_id}, package={expected_pkg}, oauth_web_clients={len(web_clients)}).")
+          PY
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
