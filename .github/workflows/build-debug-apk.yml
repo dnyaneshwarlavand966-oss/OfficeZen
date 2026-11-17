@@ -41,6 +41,13 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Print debug signing certificate fingerprints
+        run: |
+          keytool -list -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey | grep -E 'SHA1:|SHA256:'
+
       - name: Ensure google-services.json is present
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
