@@ -1,0 +1,49 @@
+name: OfficeZen Read-Only Firebase Security Audit
+
+on:
+  schedule:
+    # 09:00 Asia/Kolkata (UTC+05:30)
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: officezen-readonly-firebase-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source without persisted Git credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Authenticate with Google Cloud using direct Workload Identity Federation
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: officezen-d42ad
+          workload_identity_provider: projects/147077394585/locations/global/workloadIdentityPools/officezen-gh-pool/providers/officezen-gh-provider
+
+      - name: Run metadata and published-rules audit (GET requests only)
+        env:
+          GCP_AUTH_TOKEN: ${{ steps.auth.outputs.auth_token }}
+          GOOGLE_CLOUD_PROJECT: officezen-d42ad
+        run: |
+          python3 scripts/firebase_readonly_audit.py
+
+      - name: Upload sanitized audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: officezen-firebase-readonly-audit
+          path: audit-output/
+          if-no-files-found: ignore
+          retention-days: 14
