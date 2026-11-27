@@ -25,6 +25,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate auditor syntax and offline tests
+        run: |
+          python3 -m py_compile scripts/firebase_readonly_audit.py tests/test_firebase_readonly_audit.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
       - name: Authenticate with Google Cloud using direct Workload Identity Federation
         id: auth
         uses: google-github-actions/auth@v3
