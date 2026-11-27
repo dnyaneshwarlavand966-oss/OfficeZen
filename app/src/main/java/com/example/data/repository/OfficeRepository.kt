@@ -1,382 +1,154 @@
+// OfficeZen purely local Room SQLite repository (100% offline, zero login/cloud required)
 package com.example.data.repository
 
 import android.content.Context
-import com.example.R
+import com.example.data.local.AuditLogEntity
+import com.example.data.local.OfficeDao
+import com.example.data.local.OfficeDatabase
+import com.example.data.local.toEntity
 import com.example.data.model.AttendanceRecord
+import com.example.data.model.AttendanceSyncStatus
 import com.example.data.model.AuditLog
 import com.example.data.model.LeaveRequest
 import com.example.data.model.Member
 import com.example.data.model.MemberRole
 import com.example.data.model.Office
 import com.example.data.model.OfficeDocument
-import com.example.data.model.OfficeInvite
 import com.example.data.model.PayrollProfile
 import com.example.data.model.SalaryAdjustment
 import com.example.data.model.TeaLog
 import com.example.data.model.TeaPurchase
 import com.example.data.model.UserProfile
-import com.example.data.remote.OperationType
-import com.example.data.remote.handleFirestoreError
-import com.google.firebase.Firebase
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.auth
-import com.google.firebase.firestore.DocumentSnapshot.ServerTimestampBehavior
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.firestore.FirebaseFirestoreSettings
-import com.google.firebase.firestore.PersistentCacheSettings
-import com.google.firebase.firestore.snapshots
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withTimeout
 
 class OfficeRepository(
-  private val db: FirebaseFirestore,
-  private val auth: FirebaseAuth = Firebase.auth,
+  private val dao: OfficeDao,
 ) {
-  constructor(context: Context) : this(
-    createConfiguredFirestore(context.applicationContext),
-    Firebase.auth,
-  )
+  constructor(context: Context) : this(OfficeDatabase.getInstance(context.applicationContext).officeDao())
 
-  private fun requireUserId(): String =
-    auth.currentUser?.uid
-      ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
+  fun observeUserProfile(uid: String): Flow<UserProfile?> =
+    dao.observeUserProfile(uid).map { it?.toDomain() }
 
-  private fun <T> wrapFlow(
-    operationType: OperationType,
-    path: String,
-    uid: String,
-    source: Flow<T>,
-  ): Flow<T> =
-    source.catch { error ->
-      val firestoreError =
-        generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-      if (firestoreError == null && error is CancellationException) throw error
-      val exceptionToLog = firestoreError ?: (error as? Exception)
-      if (exceptionToLog != null && auth.currentUser?.uid == uid) {
-        handleFirestoreError(exceptionToLog, operationType, path)
-      }
-      throw error
-    }
+  fun observeAllOffices(): Flow<List<Office>> =
+    dao.observeAllOffices().map { list -> list.map { it.toDomain() } }
 
-  fun observeUserProfile(uid: String): Flow<UserProfile?> = flow {
-    val path = "users/$uid"
-    emitAll(
-      wrapFlow(
-        OperationType.GET,
-        path,
-        uid,
-        db.collection("users").document(uid).snapshots().map { snap ->
-          snap.toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
-        },
-      )
-    )
+  fun observeOffice(officeId: String): Flow<Office?> =
+    dao.observeOffice(officeId).map { it?.toDomain() }
+
+  fun observeMembers(officeId: String): Flow<List<Member>> =
+    dao.observeMembers(officeId).map { list -> list.map { it.toDomain() } }
+
+  fun observeMyMember(officeId: String, uid: String): Flow<Member?> =
+    dao.observeMyMember(officeId, uid).map { it?.toDomain() }
+
+  fun observePayrollProfiles(officeId: String): Flow<List<PayrollProfile>> =
+    dao.observePayrollProfiles(officeId).map { list -> list.map { it.toDomain() } }
+
+  fun observeAttendance(officeId: String): Flow<List<AttendanceRecord>> =
+    dao.observeAttendance(officeId).map { list -> list.map { it.toDomain() } }
+
+  fun observePendingAttendanceCount(officeId: String): Flow<Int> =
+    dao.observePendingAttendanceCount(officeId)
+
+  fun observeSyncedAttendanceCount(officeId: String): Flow<Int> =
+    dao.observeSyncedAttendanceCount(officeId)
+
+  fun observeAllPendingAttendanceCount(): Flow<Int> =
+    dao.observeAllPendingAttendanceCount()
+
+  suspend fun getPendingAttendanceRecords(): List<AttendanceRecord> =
+    dao.getPendingAttendanceRecords().map { it.toDomain() }
+
+  suspend fun getOfficeById(officeId: String): Office? =
+    dao.getOffice(officeId)?.toDomain()
+
+  suspend fun markAttendanceSyncState(
+    id: String,
+    syncStatus: String,
+    attemptEpochMs: Long,
+    syncError: String = "",
+  ) {
+    dao.updateAttendanceSyncState(id, syncStatus, attemptEpochMs, syncError.take(300))
   }
 
-  fun observeOffice(officeId: String): Flow<Office?> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId"
-    emitAll(
-      wrapFlow(
-        OperationType.GET,
-        path,
-        uid,
-        db.collection("offices").document(officeId).snapshots().map { snap ->
-          snap.toObject(Office::class.java, ServerTimestampBehavior.ESTIMATE)
-        },
-      )
-    )
+  suspend fun retryFailedAttendance() {
+    dao.retryAllFailedAttendance()
   }
 
-  fun observeMembers(officeId: String): Flow<List<Member>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/members"
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("members").snapshots().map { snap ->
-          snap.toObjects(Member::class.java, ServerTimestampBehavior.ESTIMATE)
-            .sortedBy { it.displayName.lowercase() }
-        },
-      )
-    )
-  }
+  fun observeLeaves(officeId: String): Flow<List<LeaveRequest>> =
+    dao.observeLeaves(officeId).map { list -> list.map { it.toDomain() } }
 
-  fun observeMyMember(officeId: String, uid: String): Flow<Member?> = flow {
-    val path = "offices/$officeId/members/$uid"
-    emitAll(
-      wrapFlow(
-        OperationType.GET,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("members").document(uid).snapshots()
-          .map { snap -> snap.toObject(Member::class.java, ServerTimestampBehavior.ESTIMATE) },
-      )
-    )
-  }
+  fun observeSalaryAdjustments(officeId: String): Flow<List<SalaryAdjustment>> =
+    dao.observeSalaryAdjustments(officeId).map { list -> list.map { it.toDomain() } }
 
-  fun observePayrollProfiles(officeId: String, isManagerOrOwner: Boolean): Flow<List<PayrollProfile>> =
-    flow {
-      val uid = requireUserId()
-      val path = "offices/$officeId/payroll_profiles"
-      val query =
-        if (isManagerOrOwner) {
-          db.collection("offices").document(officeId).collection("payroll_profiles")
-        } else {
-          db.collection("offices").document(officeId).collection("payroll_profiles")
-            .whereEqualTo("userId", uid)
-        }
-      emitAll(
-        wrapFlow(
-          OperationType.LIST,
-          path,
-          uid,
-          query.snapshots().map { snap ->
-            snap.toObjects(PayrollProfile::class.java, ServerTimestampBehavior.ESTIMATE)
-          },
-        )
-      )
-    }
+  fun observeTeaLogs(officeId: String): Flow<List<TeaLog>> =
+    dao.observeTeaLogs(officeId).map { list -> list.map { it.toDomain() } }
 
-  fun observeAttendance(officeId: String, isManagerOrOwner: Boolean): Flow<List<AttendanceRecord>> =
-    flow {
-      val uid = requireUserId()
-      val path = "offices/$officeId/attendance"
-      val query =
-        if (isManagerOrOwner) {
-          db.collection("offices").document(officeId).collection("attendance")
-        } else {
-          db.collection("offices").document(officeId).collection("attendance")
-            .whereEqualTo("userId", uid)
-        }
-      emitAll(
-        wrapFlow(
-          OperationType.LIST,
-          path,
-          uid,
-          query.snapshots().map { snap ->
-            snap.toObjects(AttendanceRecord::class.java, ServerTimestampBehavior.ESTIMATE)
-              .sortedByDescending { it.checkInEpochMs }
-          },
-        )
-      )
-    }
+  fun observeTeaPurchases(officeId: String): Flow<List<TeaPurchase>> =
+    dao.observeTeaPurchases(officeId).map { list -> list.map { it.toDomain() } }
 
-  fun observeLeaves(officeId: String, isManagerOrOwner: Boolean): Flow<List<LeaveRequest>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/leaves"
-    val query =
-      if (isManagerOrOwner) {
-        db.collection("offices").document(officeId).collection("leaves")
-      } else {
-        db.collection("offices").document(officeId).collection("leaves")
-          .whereEqualTo("userId", uid)
-      }
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        query.snapshots().map { snap ->
-          snap.toObjects(LeaveRequest::class.java, ServerTimestampBehavior.ESTIMATE)
-            .sortedByDescending { it.createdAt?.seconds ?: 0L }
-        },
-      )
-    )
-  }
+  fun observeDocuments(officeId: String): Flow<List<OfficeDocument>> =
+    dao.observeDocuments(officeId).map { list -> list.map { it.toDomain() } }
 
-  fun observeSalaryAdjustments(
-    officeId: String,
-    isManagerOrOwner: Boolean,
-  ): Flow<List<SalaryAdjustment>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/salary_adjustments"
-    val query =
-      if (isManagerOrOwner) {
-        db.collection("offices").document(officeId).collection("salary_adjustments")
-      } else {
-        db.collection("offices").document(officeId).collection("salary_adjustments")
-          .whereEqualTo("userId", uid)
-      }
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        query.snapshots().map { snap ->
-          snap.toObjects(SalaryAdjustment::class.java, ServerTimestampBehavior.ESTIMATE)
-            .sortedByDescending { it.createdAt?.seconds ?: 0L }
-        },
-      )
-    )
-  }
-
-  fun observeTeaLogs(officeId: String): Flow<List<TeaLog>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/tea_logs"
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("tea_logs").snapshots().map { snap ->
-          snap.toObjects(TeaLog::class.java, ServerTimestampBehavior.ESTIMATE)
-            .sortedByDescending { it.createdAt?.seconds ?: 0L }
-        },
-      )
-    )
-  }
-
-  fun observeTeaPurchases(officeId: String): Flow<List<TeaPurchase>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/tea_purchases"
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("tea_purchases").snapshots()
-          .map { snap ->
-            snap.toObjects(TeaPurchase::class.java, ServerTimestampBehavior.ESTIMATE)
-              .sortedByDescending { it.createdAt?.seconds ?: 0L }
-          },
-      )
-    )
-  }
-
-  fun observeDocuments(officeId: String): Flow<List<OfficeDocument>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/documents"
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("documents").snapshots()
-          .map { snap ->
-            snap.toObjects(OfficeDocument::class.java, ServerTimestampBehavior.ESTIMATE)
-              .sortedByDescending { it.createdAt?.seconds ?: 0L }
-          },
-      )
-    )
-  }
-
-  fun observeAuditLogs(officeId: String): Flow<List<AuditLog>> = flow {
-    val uid = requireUserId()
-    val path = "offices/$officeId/audit_logs"
-    emitAll(
-      wrapFlow(
-        OperationType.LIST,
-        path,
-        uid,
-        db.collection("offices").document(officeId).collection("audit_logs").snapshots()
-          .map { snap ->
-            snap.toObjects(AuditLog::class.java, ServerTimestampBehavior.ESTIMATE)
-              .sortedByDescending { it.createdAt?.seconds ?: 0L }
-          },
-      )
-    )
-  }
-
-  private suspend fun <T> withFirestoreTimeout(
-    operationName: String,
-    timeoutMs: Long = DEFAULT_OPERATION_TIMEOUT_MS,
-    block: suspend () -> T,
-  ): T =
-    try {
-      withTimeout(timeoutMs) { block() }
-    } catch (e: TimeoutCancellationException) {
-      throw IllegalStateException(
-        "$operationName timed out. Check your internet connection and verify Firestore database 'officezen-db' is active.",
-        e,
-      )
-    }
+  fun observeAuditLogs(officeId: String): Flow<List<AuditLog>> =
+    dao.observeAuditLogs(officeId).map { list -> list.map { it.toDomain() } }
 
   suspend fun ensureUserProfile(
+    uid: String,
     displayName: String,
-    email: String,
-    preferredLanguage: String,
+    email: String = "",
+    preferredLanguage: String = "en",
   ): Result<UserProfile> = runCatching {
-    val uid = requireUserId()
-    val docRef = db.collection("users").document(uid)
-    val existing =
-      try {
-        withFirestoreTimeout("Load user profile") {
-          docRef.get().await().toObject(UserProfile::class.java, ServerTimestampBehavior.ESTIMATE)
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, docRef.path)
-        throw e
-      }
+    val existing = dao.getUserProfile(uid)
     if (existing != null) {
-      return@runCatching existing
+      return@runCatching existing.toDomain()
     }
-    val safeName = displayName.ifBlank { email.substringBefore("@").ifBlank { "Office Member" } }.take(100)
+    val now = System.currentTimeMillis()
+    val safeName = displayName.trim().ifBlank { "Office Owner" }.take(100)
     val safeLang = preferredLanguage.ifBlank { "en" }.take(16)
-    val payload =
-      mapOf(
-        "userId" to uid,
-        "displayName" to safeName,
-        "email" to email.take(160),
-        "activeOfficeId" to "",
-        "preferredLanguage" to safeLang,
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
+    val profile =
+      UserProfile(
+        id = uid,
+        userId = uid,
+        displayName = safeName,
+        email = email.take(160),
+        activeOfficeId = "",
+        preferredLanguage = safeLang,
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    try {
-      withFirestoreTimeout("Create user profile") { docRef.set(payload).await() }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
-    UserProfile(
-      id = uid,
-      userId = uid,
-      displayName = safeName,
-      email = email,
-      activeOfficeId = "",
-      preferredLanguage = safeLang,
-    )
+    dao.upsertUserProfile(profile.toEntity())
+    profile
   }
 
-  suspend fun updatePreferredLanguage(languageCode: String): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val docRef = db.collection("users").document(uid)
-    try {
-      docRef
-        .update(
-          mapOf(
-            "preferredLanguage" to languageCode.take(16),
-            "updatedAt" to FieldValue.serverTimestamp(),
-          )
-        )
-        .await()
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-      throw e
+  suspend fun updatePreferredLanguage(uid: String, languageCode: String): Result<Unit> = runCatching {
+    dao.updatePreferredLanguage(uid, languageCode.take(16), System.currentTimeMillis())
+  }
+
+  suspend fun switchActiveOffice(uid: String, officeId: String): Result<Unit> = runCatching {
+    val existing = dao.getUserProfile(uid)
+    val now = System.currentTimeMillis()
+    if (existing == null) {
+      dao.upsertUserProfile(
+        UserProfile(
+          id = uid,
+          userId = uid,
+          displayName = "Office Owner",
+          activeOfficeId = officeId,
+          preferredLanguage = "en",
+          createdAtEpochMs = now,
+          updatedAtEpochMs = now,
+        ).toEntity()
+      )
+    } else {
+      dao.updateActiveOffice(uid, officeId, now)
     }
   }
 
   suspend fun createOffice(
+    uid: String,
     officeName: String,
     ownerDisplayName: String,
     ownerEmail: String,
@@ -390,338 +162,243 @@ class OfficeRepository(
     workingDaysPerMonth: Long,
     preferredLanguage: String = "en",
   ): Result<Office> = runCatching {
-    val uid = requireUserId()
     val trimmedOfficeName = officeName.trim().take(80)
     require(trimmedOfficeName.isNotEmpty()) { "Please enter an office name." }
-    val safeName = ownerDisplayName.ifBlank { "Owner" }.take(100)
-    val userRef = db.collection("users").document(uid)
-    val userExists =
-      try {
-        withFirestoreTimeout("Check user profile") { userRef.get().await().exists() }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, userRef.path)
-        throw e
-      }
+    val safeName = ownerDisplayName.trim().ifBlank { "Office Owner" }.take(100)
+    val now = System.currentTimeMillis()
 
     val officeId = "off_${UUID.randomUUID().toString().replace("-", "").take(16)}"
     val inviteCode = generateInviteCode()
-    val officeRef = db.collection("offices").document(officeId)
-    val officePayload =
-      mapOf(
-        "ownerId" to uid,
-        "name" to officeName.trim().take(80),
-        "inviteCode" to inviteCode,
-        "officeLat" to officeLat,
-        "officeLng" to officeLng,
-        "geofenceRadiusMeters" to geofenceRadiusMeters.coerceIn(20L, 5000L),
-        "strictGeofenceBlock" to false,
-        "shiftStartMinutes" to shiftStartMinutes.coerceIn(0L, 1439L),
-        "shiftEndMinutes" to shiftEndMinutes.coerceIn(0L, 1439L),
-        "lateGraceMinutes" to lateGraceMinutes.coerceIn(0L, 120L),
-        "lateMarksPerHalfDay" to 3L,
-        "workingDaysPerMonth" to workingDaysPerMonth.coerceIn(1L, 31L),
-        "monthEndReportDay" to 30L,
-        "ownerReportEmail" to ownerEmail.trim().take(160),
-        "ownerWhatsappPhone" to ownerPhone.trim().take(24),
-        "teaDefaultPriceInr" to 12.0,
-        "coffeeDefaultPriceInr" to 20.0,
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
+    val office =
+      Office(
+        id = officeId,
+        ownerId = uid,
+        name = trimmedOfficeName,
+        inviteCode = inviteCode,
+        officeLat = officeLat,
+        officeLng = officeLng,
+        geofenceRadiusMeters = geofenceRadiusMeters.coerceIn(20L, 5000L),
+        strictGeofenceBlock = false,
+        shiftStartMinutes = shiftStartMinutes.coerceIn(0L, 1439L),
+        shiftEndMinutes = shiftEndMinutes.coerceIn(0L, 1439L),
+        lateGraceMinutes = lateGraceMinutes.coerceIn(0L, 120L),
+        lateMarksPerHalfDay = 3L,
+        workingDaysPerMonth = workingDaysPerMonth.coerceIn(1L, 31L),
+        monthEndReportDay = 30L,
+        ownerReportEmail = ownerEmail.trim().take(160),
+        ownerWhatsappPhone = ownerPhone.trim().take(24),
+        teaDefaultPriceInr = 12.0,
+        coffeeDefaultPriceInr = 20.0,
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    try {
-      withFirestoreTimeout("Create office") { officeRef.set(officePayload).await() }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, officeRef.path)
-      throw e
-    }
+    dao.upsertOffice(office.toEntity())
 
-    val inviteRef = db.collection("office_invites").document(inviteCode)
-    val memberRef = officeRef.collection("members").document(uid)
-    val payrollRef = officeRef.collection("payroll_profiles").document(uid)
+    val member =
+      Member(
+        id = "${officeId}_${uid}",
+        userId = uid,
+        officeId = officeId,
+        ownerId = uid,
+        displayName = safeName,
+        designation = "Owner",
+        role = MemberRole.OWNER.wire,
+        active = true,
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
+      )
+    dao.upsertMember(member.toEntity())
 
-    val batch = db.batch()
-    batch.set(
-      inviteRef,
-      mapOf(
-        "inviteCode" to inviteCode,
-        "officeId" to officeId,
-        "officeName" to officeName.trim().take(80),
-        "ownerId" to uid,
-        "createdAt" to FieldValue.serverTimestamp(),
-      ),
-    )
-    batch.set(
-      memberRef,
-      mapOf(
-        "userId" to uid,
-        "officeId" to officeId,
-        "ownerId" to uid,
-        "displayName" to safeName,
-        "designation" to "Owner",
-        "role" to MemberRole.OWNER.wire,
-        "active" to true,
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      ),
-    )
-    batch.set(
-      payrollRef,
-      mapOf(
-        "userId" to uid,
-        "officeId" to officeId,
-        "ownerId" to uid,
-        "monthlySalaryInr" to 0.0,
-        "overtimeHourlyRateInr" to 0.0,
-        "phone" to ownerPhone.trim().take(24),
-        "email" to ownerEmail.trim().take(160),
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      ),
-    )
-    if (userExists) {
-      batch.update(
-        userRef,
-        mapOf(
-          "activeOfficeId" to officeId,
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
+    val payrollProfile =
+      PayrollProfile(
+        id = "${officeId}_${uid}",
+        userId = uid,
+        officeId = officeId,
+        ownerId = uid,
+        monthlySalaryInr = 0.0,
+        overtimeHourlyRateInr = 0.0,
+        phone = ownerPhone.trim().take(24),
+        email = ownerEmail.trim().take(160),
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
+      )
+    dao.upsertPayrollProfile(payrollProfile.toEntity())
+
+    val existingUser = dao.getUserProfile(uid)
+    if (existingUser != null) {
+      dao.upsertUserProfile(
+        existingUser.copy(
+          displayName = safeName,
+          activeOfficeId = officeId,
+          updatedAtEpochMs = now,
+        )
       )
     } else {
-      batch.set(
-        userRef,
-        mapOf(
-          "userId" to uid,
-          "displayName" to safeName,
-          "email" to ownerEmail.trim().take(160),
-          "activeOfficeId" to officeId,
-          "preferredLanguage" to preferredLanguage.ifBlank { "en" }.take(16),
-          "createdAt" to FieldValue.serverTimestamp(),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
+      dao.upsertUserProfile(
+        UserProfile(
+          id = uid,
+          userId = uid,
+          displayName = safeName,
+          email = ownerEmail.trim().take(160),
+          activeOfficeId = officeId,
+          preferredLanguage = preferredLanguage.ifBlank { "en" }.take(16),
+          createdAtEpochMs = now,
+          updatedAtEpochMs = now,
+        ).toEntity()
       )
-    }
-    try {
-      withFirestoreTimeout("Setup office workspace") { batch.commit().await() }
-      appendAuditLog(
-        officeId = officeId,
-        actorUid = uid,
-        actorName = safeName,
-        actorRole = MemberRole.OWNER,
-        actionType = "OFFICE_CREATED",
-        summary = "Created office $officeName (Invite: $inviteCode)",
-      )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.WRITE, officeRef.path)
-      throw e
     }
 
-    Office(
-      id = officeId,
-      ownerId = uid,
-      name = officeName.trim(),
-      inviteCode = inviteCode,
-      officeLat = officeLat,
-      officeLng = officeLng,
-      geofenceRadiusMeters = geofenceRadiusMeters,
-      shiftStartMinutes = shiftStartMinutes,
-      shiftEndMinutes = shiftEndMinutes,
-      lateGraceMinutes = lateGraceMinutes,
-      workingDaysPerMonth = workingDaysPerMonth,
-      ownerReportEmail = ownerEmail,
-      ownerWhatsappPhone = ownerPhone,
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = uid,
+      actorName = safeName,
+      actorRole = MemberRole.OWNER,
+      actionType = "OFFICE_CREATED",
+      summary = "Created local office $trimmedOfficeName (Code: $inviteCode)",
     )
+    office
   }
 
-  suspend fun joinOfficeByInviteCode(
+  suspend fun joinLocalOfficeByInviteCode(
+    uid: String,
     rawCode: String,
     displayName: String,
-    email: String,
     phone: String,
     designation: String,
-    preferredLanguage: String = "en",
   ): Result<String> = runCatching {
-    val uid = requireUserId()
     val code = rawCode.trim().uppercase()
     require(code.matches(Regex("^[A-Z0-9]{6}$"))) { "Invite code must be 6 letters/digits." }
-    val inviteRef = db.collection("office_invites").document(code)
-    val invite =
-      try {
-        withFirestoreTimeout("Lookup invite code") {
-          inviteRef.get().await().toObject(OfficeInvite::class.java, ServerTimestampBehavior.ESTIMATE)
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, inviteRef.path)
-        throw e
-      } ?: throw IllegalArgumentException("Invalid office invite code.")
-
-    val officeId = invite.officeId
-    val safeName = displayName.ifBlank { "Employee" }.take(100)
-    val officeRef = db.collection("offices").document(officeId)
-    val memberRef = officeRef.collection("members").document(uid)
-    val userRef = db.collection("users").document(uid)
-
-    val existingMember =
-      try {
-        withFirestoreTimeout("Check office membership") { memberRef.get().await() }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, memberRef.path)
-        throw e
-      }
-
-    if (existingMember.exists() && existingMember.getBoolean("active") == false) {
-      throw IllegalStateException("Your membership in this office is inactive. Contact the office owner.")
-    }
-
-    val userExists =
-      try {
-        withFirestoreTimeout("Check user profile") { userRef.get().await().exists() }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, userRef.path)
-        throw e
-      }
-
-    val batch = db.batch()
-    val isNewMember = !existingMember.exists()
-    if (isNewMember) {
-      batch.set(
-        memberRef,
-        mapOf(
-          "userId" to uid,
-          "officeId" to officeId,
-          "ownerId" to invite.ownerId,
-          "displayName" to safeName,
-          "designation" to designation.ifBlank { "Staff" }.take(80),
-          "role" to MemberRole.EMPLOYEE.wire,
-          "active" to true,
-          "createdAt" to FieldValue.serverTimestamp(),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
+    val office = dao.getOfficeByInviteCode(code)?.toDomain()
+      ?: throw IllegalArgumentException("No local office found on this device with code $code.")
+    val now = System.currentTimeMillis()
+    val safeName = displayName.trim().ifBlank { "Staff Member" }.take(100)
+    val existingMember = dao.getMember(office.id, uid)
+    if (existingMember == null) {
+      dao.upsertMember(
+        Member(
+          id = "${office.id}_${uid}",
+          userId = uid,
+          officeId = office.id,
+          ownerId = office.ownerId,
+          displayName = safeName,
+          designation = designation.trim().ifBlank { "Staff" }.take(80),
+          role = MemberRole.EMPLOYEE.wire,
+          active = true,
+          createdAtEpochMs = now,
+          updatedAtEpochMs = now,
+        ).toEntity()
       )
-      batch.set(
-        officeRef.collection("payroll_profiles").document(uid),
-        mapOf(
-          "userId" to uid,
-          "officeId" to officeId,
-          "ownerId" to invite.ownerId,
-          "monthlySalaryInr" to 0.0,
-          "overtimeHourlyRateInr" to 0.0,
-          "phone" to phone.trim().take(24),
-          "email" to email.trim().take(160),
-          "createdAt" to FieldValue.serverTimestamp(),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
+      dao.upsertPayrollProfile(
+        PayrollProfile(
+          id = "${office.id}_${uid}",
+          userId = uid,
+          officeId = office.id,
+          ownerId = office.ownerId,
+          monthlySalaryInr = 0.0,
+          overtimeHourlyRateInr = 0.0,
+          phone = phone.trim().take(24),
+          createdAtEpochMs = now,
+          updatedAtEpochMs = now,
+        ).toEntity()
       )
     }
-    if (userExists) {
-      batch.update(
-        userRef,
-        mapOf(
-          "activeOfficeId" to officeId,
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
-      )
-    } else {
-      batch.set(
-        userRef,
-        mapOf(
-          "userId" to uid,
-          "displayName" to safeName,
-          "email" to email.trim().take(160),
-          "activeOfficeId" to officeId,
-          "preferredLanguage" to preferredLanguage.ifBlank { "en" }.take(16),
-          "createdAt" to FieldValue.serverTimestamp(),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
-      )
-    }
-    try {
-      withFirestoreTimeout("Join office") { batch.commit().await() }
-      if (isNewMember) {
-        appendAuditLog(
-          officeId = officeId,
-          actorUid = uid,
-          actorName = safeName,
-          actorRole = MemberRole.EMPLOYEE,
-          actionType = "MEMBER_JOINED",
-          summary = "$safeName joined ${invite.officeName}",
-        )
-      }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.WRITE, memberRef.path)
-      throw e
-    }
-    officeId
+    dao.updateActiveOffice(uid, office.id, now)
+    office.id
   }
 
-  suspend fun leaveActiveOfficeWorkspace(): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val userRef = db.collection("users").document(uid)
-    try {
-      userRef.update(mapOf("activeOfficeId" to "", "updatedAt" to FieldValue.serverTimestamp())).await()
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, userRef.path)
-      throw e
-    }
+  suspend fun addLocalMember(
+    officeId: String,
+    ownerId: String,
+    displayName: String,
+    designation: String,
+    role: MemberRole,
+    monthlySalaryInr: Double,
+    overtimeHourlyRateInr: Double,
+    phone: String,
+    actorUid: String,
+    actorName: String,
+    actorRole: MemberRole,
+  ): Result<Member> = runCatching {
+    val safeName = displayName.trim().take(100)
+    require(safeName.isNotEmpty()) { "Please enter staff member name." }
+    val now = System.currentTimeMillis()
+    val newUserId = "staff_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+    val member =
+      Member(
+        id = "${officeId}_${newUserId}",
+        userId = newUserId,
+        officeId = officeId,
+        ownerId = ownerId,
+        displayName = safeName,
+        designation = designation.trim().ifBlank { "Staff" }.take(80),
+        role = role.wire,
+        active = true,
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
+      )
+    dao.upsertMember(member.toEntity())
+
+    val profile =
+      PayrollProfile(
+        id = "${officeId}_${newUserId}",
+        userId = newUserId,
+        officeId = officeId,
+        ownerId = ownerId,
+        monthlySalaryInr = monthlySalaryInr.coerceAtLeast(0.0),
+        overtimeHourlyRateInr = overtimeHourlyRateInr.coerceAtLeast(0.0),
+        phone = phone.trim().take(24),
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
+      )
+    dao.upsertPayrollProfile(profile.toEntity())
+
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "MEMBER_ADDED",
+      summary = "Added $safeName (${role.wire}, ₹${monthlySalaryInr.toInt()}/mo)",
+    )
+    member
+  }
+
+  suspend fun leaveActiveOfficeWorkspace(uid: String): Result<Unit> = runCatching {
+    dao.updateActiveOffice(uid, "", System.currentTimeMillis())
   }
 
   suspend fun updateOfficeSettings(
     office: Office,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val officeRef = db.collection("offices").document(office.id)
-    val updates =
-      mapOf(
-        "name" to office.name.trim().take(80),
-        "officeLat" to office.officeLat,
-        "officeLng" to office.officeLng,
-        "geofenceRadiusMeters" to office.geofenceRadiusMeters.coerceIn(20L, 5000L),
-        "strictGeofenceBlock" to office.strictGeofenceBlock,
-        "shiftStartMinutes" to office.shiftStartMinutes.coerceIn(0L, 1439L),
-        "shiftEndMinutes" to office.shiftEndMinutes.coerceIn(0L, 1439L),
-        "lateGraceMinutes" to office.lateGraceMinutes.coerceIn(0L, 120L),
-        "lateMarksPerHalfDay" to office.lateMarksPerHalfDay.coerceIn(1L, 10L),
-        "workingDaysPerMonth" to office.workingDaysPerMonth.coerceIn(1L, 31L),
-        "monthEndReportDay" to office.monthEndReportDay.coerceIn(1L, 31L),
-        "ownerReportEmail" to office.ownerReportEmail.trim().take(160),
-        "ownerWhatsappPhone" to office.ownerWhatsappPhone.trim().take(24),
-        "teaDefaultPriceInr" to office.teaDefaultPriceInr.coerceIn(0.0, 500.0),
-        "coffeeDefaultPriceInr" to office.coffeeDefaultPriceInr.coerceIn(0.0, 500.0),
-        "updatedAt" to FieldValue.serverTimestamp(),
+    val now = System.currentTimeMillis()
+    val clean =
+      office.copy(
+        name = office.name.trim().take(80),
+        geofenceRadiusMeters = office.geofenceRadiusMeters.coerceIn(20L, 5000L),
+        shiftStartMinutes = office.shiftStartMinutes.coerceIn(0L, 1439L),
+        shiftEndMinutes = office.shiftEndMinutes.coerceIn(0L, 1439L),
+        lateGraceMinutes = office.lateGraceMinutes.coerceIn(0L, 120L),
+        lateMarksPerHalfDay = office.lateMarksPerHalfDay.coerceIn(1L, 10L),
+        workingDaysPerMonth = office.workingDaysPerMonth.coerceIn(1L, 31L),
+        monthEndReportDay = office.monthEndReportDay.coerceIn(1L, 31L),
+        ownerReportEmail = office.ownerReportEmail.trim().take(160),
+        ownerWhatsappPhone = office.ownerWhatsappPhone.trim().take(24),
+        teaDefaultPriceInr = office.teaDefaultPriceInr.coerceIn(0.0, 500.0),
+        coffeeDefaultPriceInr = office.coffeeDefaultPriceInr.coerceIn(0.0, 500.0),
+        updatedAtEpochMs = now,
       )
-    try {
-      officeRef.update(updates).await()
-      appendAuditLog(
-        officeId = office.id,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = "OFFICE_SETTINGS_UPDATED",
-        summary = "Updated office settings (${office.name}, geofence ${office.geofenceRadiusMeters}m)",
-      )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, officeRef.path)
-      throw e
-    }
+    dao.upsertOffice(clean.toEntity())
+    appendAuditLog(
+      officeId = clean.id,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "OFFICE_SETTINGS_UPDATED",
+      summary = "Updated office settings (${clean.name}, geofence ${clean.geofenceRadiusMeters}m)",
+    )
   }
 
   suspend fun updateMemberRoleAndSalary(
@@ -734,75 +411,43 @@ class OfficeRepository(
     overtimeHourlyRateInr: Double,
     phone: String,
     email: String,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val officeRef = db.collection("offices").document(officeId)
-    val memberRef = officeRef.collection("members").document(member.userId)
-    val payrollRef = officeRef.collection("payroll_profiles").document(member.userId)
-    val batch = db.batch()
-    batch.update(
-      memberRef,
-      mapOf(
-        "role" to newRole.wire,
-        "designation" to newDesignation.trim().take(80),
-        "active" to active,
-        "updatedAt" to FieldValue.serverTimestamp(),
-      ),
+    val now = System.currentTimeMillis()
+    dao.upsertMember(
+      member.copy(
+        id = member.id.ifBlank { "${officeId}_${member.userId}" },
+        role = newRole.wire,
+        designation = newDesignation.trim().take(80),
+        active = active,
+        updatedAtEpochMs = now,
+      ).toEntity()
     )
-    val payrollSnap =
-      try {
-        payrollRef.get().await()
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        handleFirestoreError(e, OperationType.GET, payrollRef.path)
-        throw e
-      }
-    if (payrollSnap.exists()) {
-      batch.update(
-        payrollRef,
-        mapOf(
-          "monthlySalaryInr" to monthlySalaryInr.coerceAtLeast(0.0),
-          "overtimeHourlyRateInr" to overtimeHourlyRateInr.coerceAtLeast(0.0),
-          "phone" to phone.trim().take(24),
-          "email" to email.trim().take(160),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
-      )
-    } else {
-      batch.set(
-        payrollRef,
-        mapOf(
-          "userId" to member.userId,
-          "officeId" to officeId,
-          "ownerId" to member.ownerId,
-          "monthlySalaryInr" to monthlySalaryInr.coerceAtLeast(0.0),
-          "overtimeHourlyRateInr" to overtimeHourlyRateInr.coerceAtLeast(0.0),
-          "phone" to phone.trim().take(24),
-          "email" to email.trim().take(160),
-          "createdAt" to FieldValue.serverTimestamp(),
-          "updatedAt" to FieldValue.serverTimestamp(),
-        ),
-      )
-    }
-    try {
-      batch.commit().await()
-      appendAuditLog(
+    val existingProfile = dao.getPayrollProfile(officeId, member.userId)
+    val nextProfile =
+      PayrollProfile(
+        id = "${officeId}_${member.userId}",
+        userId = member.userId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = "MEMBER_PAY_UPDATED",
-        summary = "Updated ${member.displayName}: role=${newRole.wire}, salary=₹${monthlySalaryInr.toInt()}",
+        ownerId = member.ownerId,
+        monthlySalaryInr = monthlySalaryInr.coerceAtLeast(0.0),
+        overtimeHourlyRateInr = overtimeHourlyRateInr.coerceAtLeast(0.0),
+        phone = phone.trim().take(24),
+        email = email.trim().take(160),
+        createdAtEpochMs = existingProfile?.createdAtEpochMs ?: now,
+        updatedAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, memberRef.path)
-      throw e
-    }
+    dao.upsertPayrollProfile(nextProfile.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "MEMBER_PAY_UPDATED",
+      summary = "Updated ${member.displayName}: role=${newRole.wire}, salary=₹${monthlySalaryInr.toInt()}",
+    )
   }
 
   suspend fun checkIn(
@@ -810,47 +455,36 @@ class OfficeRepository(
     record: AttendanceRecord,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
-    val docId = "${uid}_${record.dateKey}"
-    val docRef = db.collection("offices").document(officeId).collection("attendance").document(docId)
-    val payload =
-      mapOf(
-        "userId" to uid,
-        "officeId" to officeId,
-        "userName" to record.userName.take(100),
-        "dateKey" to record.dateKey.take(16),
-        "checkInEpochMs" to record.checkInEpochMs,
-        "checkOutEpochMs" to 0L,
-        "checkInLat" to record.checkInLat,
-        "checkInLng" to record.checkInLng,
-        "distanceMeters" to record.distanceMeters,
-        "isOutOfRange" to record.isOutOfRange,
-        "isMockLocation" to false,
-        "status" to record.status,
-        "lateMinutes" to record.lateMinutes.coerceAtLeast(0L),
-        "overtimeMinutes" to 0L,
-        "selfieBase64" to record.selfieBase64.take(240000),
-        "note" to record.note.take(300),
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      val rangeTag = if (record.isOutOfRange) " [OUT OF RANGE: ${record.distanceMeters.toInt()}m]" else ""
-      appendAuditLog(
+    val now = System.currentTimeMillis()
+    val docId = record.id.ifBlank { "${record.userId}_${record.dateKey}" }
+    val safeSelfie = if (record.selfieBase64.length <= 240_000) record.selfieBase64 else ""
+    val clean =
+      record.copy(
+        id = docId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = record.userName,
-        actorRole = actorRole,
-        actionType = "CHECK_IN",
-        summary = "${record.userName} checked in (${record.status})$rangeTag",
+        userName = record.userName.take(100),
+        dateKey = record.dateKey.take(16),
+        isMockLocation = false,
+        lateMinutes = record.lateMinutes.coerceAtLeast(0L),
+        overtimeMinutes = 0L,
+        selfieBase64 = safeSelfie,
+        note = record.note.take(300),
+        syncStatus = AttendanceSyncStatus.PENDING,
+        lastSyncAttemptEpochMs = 0L,
+        syncError = "",
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertAttendance(clean.toEntity())
+    val rangeTag = if (clean.isOutOfRange) " [OUT OF RANGE: ${clean.distanceMeters.toInt()}m]" else ""
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = clean.userId,
+      actorName = clean.userName,
+      actorRole = actorRole,
+      actionType = "CHECK_IN",
+      summary = "${clean.userName} checked in (${clean.status})$rangeTag",
+    )
     docId
   }
 
@@ -860,36 +494,32 @@ class OfficeRepository(
     checkOutEpochMs: Long,
     overtimeMinutes: Long,
     note: String,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val docRef = db.collection("offices").document(officeId).collection("attendance").document(record.id)
-    try {
-      docRef
-        .update(
-          mapOf(
-            "checkOutEpochMs" to checkOutEpochMs,
-            "overtimeMinutes" to overtimeMinutes.coerceIn(0L, 1440L),
-            "note" to note.take(300),
-            "updatedAt" to FieldValue.serverTimestamp(),
-          )
-        )
-        .await()
-      appendAuditLog(
+    val docId = record.id.ifBlank { "${record.userId}_${record.dateKey}" }
+    val current = dao.getAttendanceById(docId)?.toDomain() ?: record
+    val updated =
+      current.copy(
+        id = docId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = "CHECK_OUT",
-        summary = "$actorName checked out (OT: ${overtimeMinutes}m)",
+        checkOutEpochMs = checkOutEpochMs,
+        overtimeMinutes = overtimeMinutes.coerceIn(0L, 1440L),
+        note = note.take(300),
+        syncStatus = AttendanceSyncStatus.PENDING,
+        syncError = "",
+        updatedAtEpochMs = System.currentTimeMillis(),
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-      throw e
-    }
+    dao.upsertAttendance(updated.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "CHECK_OUT",
+      summary = "$actorName checked out (OT: ${overtimeMinutes}m)",
+    )
   }
 
   suspend fun submitLeave(
@@ -897,41 +527,32 @@ class OfficeRepository(
     leave: LeaveRequest,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
+    val now = System.currentTimeMillis()
     val docId = "lv_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val docRef = db.collection("offices").document(officeId).collection("leaves").document(docId)
-    val payload =
-      mapOf(
-        "userId" to uid,
-        "officeId" to officeId,
-        "userName" to leave.userName.take(100),
-        "leaveType" to leave.leaveType,
-        "startDateKey" to leave.startDateKey.take(16),
-        "endDateKey" to leave.endDateKey.take(16),
-        "daysCount" to leave.daysCount.coerceIn(0.5, 60.0),
-        "reason" to leave.reason.trim().take(400),
-        "status" to "pending",
-        "reviewedBy" to "",
-        "reviewNote" to "",
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      appendAuditLog(
+    val clean =
+      leave.copy(
+        id = docId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = leave.userName,
-        actorRole = actorRole,
-        actionType = "LEAVE_REQUESTED",
-        summary = "${leave.userName} requested ${leave.daysCount}d ${leave.leaveType} leave (${leave.startDateKey})",
+        userName = leave.userName.take(100),
+        startDateKey = leave.startDateKey.take(16),
+        endDateKey = leave.endDateKey.take(16),
+        daysCount = leave.daysCount.coerceIn(0.5, 60.0),
+        reason = leave.reason.trim().take(400),
+        status = "pending",
+        reviewedBy = "",
+        reviewNote = "",
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertLeave(clean.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = clean.userId,
+      actorName = clean.userName,
+      actorRole = actorRole,
+      actionType = "LEAVE_REQUESTED",
+      summary = "${clean.userName} requested ${clean.daysCount}d ${clean.leaveType} leave (${clean.startDateKey})",
+    )
     docId
   }
 
@@ -940,37 +561,28 @@ class OfficeRepository(
     leave: LeaveRequest,
     approved: Boolean,
     reviewNote: String,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val docRef = db.collection("offices").document(officeId).collection("leaves").document(leave.id)
     val nextStatus = if (approved) "approved" else "rejected"
-    try {
-      docRef
-        .update(
-          mapOf(
-            "status" to nextStatus,
-            "reviewedBy" to uid,
-            "reviewNote" to reviewNote.trim().take(300),
-            "updatedAt" to FieldValue.serverTimestamp(),
-          )
-        )
-        .await()
-      appendAuditLog(
+    dao.upsertLeave(
+      leave.copy(
         officeId = officeId,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = if (approved) "LEAVE_APPROVED" else "LEAVE_REJECTED",
-        summary = "$actorName $nextStatus ${leave.userName}'s leave (${leave.startDateKey})",
-      )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-      throw e
-    }
+        status = nextStatus,
+        reviewedBy = actorUid,
+        reviewNote = reviewNote.trim().take(300),
+        updatedAtEpochMs = System.currentTimeMillis(),
+      ).toEntity()
+    )
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = if (approved) "LEAVE_APPROVED" else "LEAVE_REJECTED",
+      summary = "$actorName $nextStatus ${leave.userName}'s leave (${leave.startDateKey})",
+    )
   }
 
   suspend fun addSalaryAdjustment(
@@ -981,46 +593,40 @@ class OfficeRepository(
     type: String,
     amountInr: Double,
     note: String,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
+    val now = System.currentTimeMillis()
     val docId = "adj_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val docRef =
-      db.collection("offices").document(officeId).collection("salary_adjustments").document(docId)
-    val payload =
-      mapOf(
-        "userId" to targetUserId,
-        "officeId" to officeId,
-        "monthKey" to monthKey.take(10),
-        "type" to type,
-        "amountInr" to amountInr.coerceAtLeast(1.0),
-        "note" to note.trim().take(300),
-        "addedBy" to uid,
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      appendAuditLog(
+    val adj =
+      SalaryAdjustment(
+        id = docId,
+        userId = targetUserId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = "SALARY_ADJUSTMENT",
-        summary = "Added $type ₹${amountInr.toInt()} for $targetUserName ($monthKey)",
+        monthKey = monthKey.take(10),
+        type = type,
+        amountInr = amountInr.coerceAtLeast(1.0),
+        note = note.trim().take(300),
+        addedBy = actorUid,
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertSalaryAdjustment(adj.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "SALARY_ADJUSTMENT",
+      summary = "Added $type ₹${amountInr.toInt()} for $targetUserName ($monthKey)",
+    )
     docId
   }
 
   suspend fun logTeaOrCoffee(
     officeId: String,
+    userId: String,
     userName: String,
     item: String,
     quantity: Long,
@@ -1029,55 +635,40 @@ class OfficeRepository(
     monthKey: String,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
+    val now = System.currentTimeMillis()
     val docId = "tea_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val docRef = db.collection("offices").document(officeId).collection("tea_logs").document(docId)
-    val payload =
-      mapOf(
-        "userId" to uid,
-        "officeId" to officeId,
-        "userName" to userName.take(100),
-        "item" to item,
-        "quantity" to quantity.coerceIn(1L, 20L),
-        "unitCostInr" to unitCostInr.coerceAtLeast(0.0),
-        "dateKey" to dateKey.take(16),
-        "monthKey" to monthKey.take(10),
-        "createdAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      appendAuditLog(
+    val log =
+      TeaLog(
+        id = docId,
+        userId = userId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = userName,
-        actorRole = actorRole,
-        actionType = "TEA_LOGGED",
-        summary = "$userName logged $quantity x $item",
+        userName = userName.take(100),
+        item = item,
+        quantity = quantity.coerceIn(1L, 20L),
+        unitCostInr = unitCostInr.coerceAtLeast(0.0),
+        dateKey = dateKey.take(16),
+        monthKey = monthKey.take(10),
+        createdAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertTeaLog(log.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = userId,
+      actorName = userName,
+      actorRole = actorRole,
+      actionType = "TEA_LOGGED",
+      summary = "$userName logged $quantity x $item",
+    )
     docId
   }
 
-  suspend fun deleteTeaLog(officeId: String, logId: String): Result<Unit> = runCatching {
-    requireUserId()
-    val docRef = db.collection("offices").document(officeId).collection("tea_logs").document(logId)
-    try {
-      docRef.delete().await()
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.DELETE, docRef.path)
-      throw e
-    }
+  suspend fun deleteTeaLog(logId: String): Result<Unit> = runCatching {
+    dao.deleteTeaLog(logId)
   }
 
   suspend fun addTeaPurchase(
     officeId: String,
+    addedByUid: String,
     addedByName: String,
     category: String,
     quantityLabel: String,
@@ -1087,39 +678,31 @@ class OfficeRepository(
     note: String,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
+    val now = System.currentTimeMillis()
     val docId = "pur_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val docRef =
-      db.collection("offices").document(officeId).collection("tea_purchases").document(docId)
-    val payload =
-      mapOf(
-        "officeId" to officeId,
-        "addedBy" to uid,
-        "addedByName" to addedByName.take(100),
-        "category" to category,
-        "quantityLabel" to quantityLabel.trim().take(60),
-        "amountInr" to amountInr.coerceAtLeast(1.0),
-        "dateKey" to dateKey.take(16),
-        "monthKey" to monthKey.take(10),
-        "note" to note.trim().take(300),
-        "createdAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      appendAuditLog(
+    val purchase =
+      TeaPurchase(
+        id = docId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = addedByName,
-        actorRole = actorRole,
-        actionType = "PANTRY_PURCHASE",
-        summary = "Recorded $category ($quantityLabel) ₹${amountInr.toInt()}",
+        addedBy = addedByUid,
+        addedByName = addedByName.take(100),
+        category = category,
+        quantityLabel = quantityLabel.trim().take(60),
+        amountInr = amountInr.coerceAtLeast(1.0),
+        dateKey = dateKey.take(16),
+        monthKey = monthKey.take(10),
+        note = note.trim().take(300),
+        createdAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertTeaPurchase(purchase.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = addedByUid,
+      actorName = addedByName,
+      actorRole = actorRole,
+      actionType = "PANTRY_PURCHASE",
+      summary = "Recorded $category ($quantityLabel) ₹${amountInr.toInt()}",
+    )
     docId
   }
 
@@ -1128,41 +711,32 @@ class OfficeRepository(
     document: OfficeDocument,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
-    val uid = requireUserId()
+    val now = System.currentTimeMillis()
     val docId = "doc_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val docRef = db.collection("offices").document(officeId).collection("documents").document(docId)
-    val payload =
-      mapOf(
-        "officeId" to officeId,
-        "createdBy" to uid,
-        "createdByName" to document.createdByName.take(100),
-        "serialNo" to document.serialNo.trim().take(40),
-        "direction" to document.direction,
-        "dateKey" to document.dateKey.take(16),
-        "partyName" to document.partyName.trim().take(120),
-        "subject" to document.subject.trim().take(200),
-        "status" to document.status,
-        "scanBase64" to document.scanBase64.take(280000),
-        "note" to document.note.trim().take(400),
-        "createdAt" to FieldValue.serverTimestamp(),
-        "updatedAt" to FieldValue.serverTimestamp(),
-      )
-    try {
-      docRef.set(payload).await()
-      appendAuditLog(
+    val safeScan = if (document.scanBase64.length <= 280_000) document.scanBase64 else ""
+    val clean =
+      document.copy(
+        id = docId,
         officeId = officeId,
-        actorUid = uid,
-        actorName = document.createdByName,
-        actorRole = actorRole,
-        actionType = "DOCUMENT_ADDED",
-        summary = "Added ${document.direction} ${document.serialNo}: ${document.subject}",
+        createdByName = document.createdByName.take(100),
+        serialNo = document.serialNo.trim().take(40),
+        dateKey = document.dateKey.take(16),
+        partyName = document.partyName.trim().take(120),
+        subject = document.subject.trim().take(200),
+        scanBase64 = safeScan,
+        note = document.note.trim().take(400),
+        createdAtEpochMs = now,
+        updatedAtEpochMs = now,
       )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, docRef.path)
-      throw e
-    }
+    dao.upsertDocument(clean.toEntity())
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = clean.createdBy,
+      actorName = clean.createdByName,
+      actorRole = actorRole,
+      actionType = "DOCUMENT_ADDED",
+      summary = "Added ${clean.direction} ${clean.serialNo}: ${clean.subject}",
+    )
     docId
   }
 
@@ -1170,34 +744,25 @@ class OfficeRepository(
     officeId: String,
     doc: OfficeDocument,
     newStatus: String,
+    actorUid: String,
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
-    val uid = requireUserId()
-    val docRef = db.collection("offices").document(officeId).collection("documents").document(doc.id)
-    try {
-      docRef
-        .update(
-          mapOf(
-            "status" to newStatus,
-            "updatedAt" to FieldValue.serverTimestamp(),
-          )
-        )
-        .await()
-      appendAuditLog(
+    dao.upsertDocument(
+      doc.copy(
         officeId = officeId,
-        actorUid = uid,
-        actorName = actorName,
-        actorRole = actorRole,
-        actionType = "DOCUMENT_UPDATED",
-        summary = "Updated ${doc.serialNo} status to $newStatus",
-      )
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-      throw e
-    }
+        status = newStatus,
+        updatedAtEpochMs = System.currentTimeMillis(),
+      ).toEntity()
+    )
+    appendAuditLog(
+      officeId = officeId,
+      actorUid = actorUid,
+      actorName = actorName,
+      actorRole = actorRole,
+      actionType = "DOCUMENT_UPDATED",
+      summary = "Updated ${doc.serialNo} status to $newStatus",
+    )
   }
 
   suspend fun appendAuditLog(
@@ -1209,65 +774,25 @@ class OfficeRepository(
     summary: String,
   ) {
     val logId = "aud_${UUID.randomUUID().toString().replace("-", "").take(14)}"
-    val logRef = db.collection("offices").document(officeId).collection("audit_logs").document(logId)
-    val payload =
-      mapOf(
-        "officeId" to officeId,
-        "actorUid" to actorUid,
-        "actorName" to actorName.ifBlank { "Member" }.take(100),
-        "actorRole" to actorRole.wire,
-        "actionType" to actionType.take(60),
-        "summary" to summary.take(400),
-        "createdAt" to FieldValue.serverTimestamp(),
+    dao.insertAuditLog(
+      AuditLogEntity(
+        id = logId,
+        officeId = officeId,
+        actorUid = actorUid,
+        actorName = actorName.ifBlank { "Member" }.take(100),
+        actorRole = actorRole.wire,
+        actionType = actionType.take(60),
+        summary = summary.take(400),
+        createdAtEpochMs = System.currentTimeMillis(),
       )
-    try {
-      logRef.set(payload).await()
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      handleFirestoreError(e, OperationType.CREATE, logRef.path)
-    }
+    )
   }
 
   companion object {
-    private const val DEFAULT_OPERATION_TIMEOUT_MS = 20_000L
+    const val LOCAL_DEFAULT_USER_ID = "local_owner"
 
-    fun friendlyErrorMessage(error: Throwable, fallback: String): String {
-      val firestoreError =
-        generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-      if (firestoreError != null) {
-        return when (firestoreError.code) {
-          FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-            "Firestore permission denied on database 'officezen-db'. Verify Firestore security rules are deployed and your account is signed in."
-          FirebaseFirestoreException.Code.NOT_FOUND ->
-            "Firestore database 'officezen-db' or requested document was not found."
-          FirebaseFirestoreException.Code.UNAVAILABLE,
-          FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
-            "Unable to reach Firestore ('officezen-db'). Check internet connection and try again."
-          FirebaseFirestoreException.Code.UNAUTHENTICATED ->
-            "Google Sign-In session expired. Please sign in again."
-          else -> firestoreError.localizedMessage ?: fallback
-        }
-      }
-      return error.localizedMessage?.takeIf { it.isNotBlank() } ?: fallback
-    }
-
-    private fun createConfiguredFirestore(appContext: Context): FirebaseFirestore {
-      val dbId = appContext.getString(R.string.firestore_database_id).trim()
-      require(dbId.isNotEmpty()) { "firestore_database_id must not be empty" }
-      val instance = FirebaseFirestore.getInstance(dbId)
-      try {
-        instance.firestoreSettings =
-          FirebaseFirestoreSettings.Builder()
-            .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
-            .build()
-      } catch (_: IllegalStateException) {
-        // Already configured once in this process
-      }
-      return instance
-    }
+    fun friendlyErrorMessage(error: Throwable, fallback: String): String =
+      error.localizedMessage?.takeIf { it.isNotBlank() } ?: fallback
 
     private fun generateInviteCode(): String {
       val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

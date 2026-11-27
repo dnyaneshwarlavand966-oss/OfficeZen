@@ -1,5 +1,5 @@
-// OfficeZen Credential Manager Google Sign-In helper
-package com.example.ui.auth
+// Jetpack Credential Manager Google Sign-In helper for OfficeZen cloud sync
+package com.example.auth
 
 import android.app.Activity
 import android.content.Context
@@ -17,24 +17,14 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 object GoogleAuthHelper {
-  private const val TAG = "OfficeZenAuth"
-  private const val AUTO_SIGN_IN_TIMEOUT_MS = 8_000L
-
-  private fun resolveWebClientId(context: Context): String? =
-    try {
-      context.getString(R.string.default_web_client_id).trim().takeIf { it.isNotEmpty() }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to resolve default_web_client_id from Google Services resources", e)
-      null
-    }
 
   fun attemptAutoSignIn(
     context: Context,
@@ -43,45 +33,44 @@ object GoogleAuthHelper {
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope,
   ) {
-    if (Firebase.auth.currentUser != null) {
+    if (runCatching { Firebase.auth.currentUser }.getOrNull() != null) {
       onAuthSuccess()
       return
     }
-    val clientId = resolveWebClientId(context)
-    if (clientId == null) {
+    val clientId =
+      try {
+        context.getString(R.string.default_web_client_id)
+      } catch (_: Exception) {
+        onUnauthenticated()
+        return
+      }
+    if (clientId.isBlank()) {
       onUnauthenticated()
       return
     }
-
     val googleIdOption =
       GetGoogleIdOption.Builder()
         .setFilterByAuthorizedAccounts(true)
         .setServerClientId(clientId)
         .setAutoSelectEnabled(true)
         .build()
-
-    val request = GetCredentialRequest.Builder().addCredentialOption(googleIdOption).build()
+    val request =
+      GetCredentialRequest.Builder()
+        .addCredentialOption(googleIdOption)
+        .build()
 
     scope.launch {
       try {
-        val completed =
-          withTimeoutOrNull(AUTO_SIGN_IN_TIMEOUT_MS) {
-            val result = credentialManager.getCredential(context, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-              val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-              val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-              Firebase.auth.signInWithCredential(authCredential).await()
-              true
-            } else {
-              false
-            }
-          }
-        if (completed == true) {
+        val cred = credentialManager.getCredential(context, request).credential
+        if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+          val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
+          Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
           onAuthSuccess()
         } else {
           onUnauthenticated()
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (_: Exception) {
         onUnauthenticated()
       }
@@ -96,35 +85,42 @@ object GoogleAuthHelper {
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {},
   ) {
-    val clientId = resolveWebClientId(context)
-    if (clientId == null) {
-      onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+    val clientId =
+      try {
+        context.getString(R.string.default_web_client_id)
+      } catch (_: Exception) {
+        onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+        return
+      }
+    if (clientId.isBlank()) {
+      onAuthError("Google Sign-In configuration missing: default_web_client_id is empty")
       return
     }
-
+    val activityContext = context as? Activity ?: context
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+    val request =
+      GetCredentialRequest.Builder()
+        .addCredentialOption(signInOption)
+        .build()
 
     scope.launch {
       try {
-        val activity = context as? Activity
-          ?: throw IllegalStateException("Sign-In requires an Activity context.")
-        val result = credentialManager.getCredential(activity, request)
-        val credential = result.credential
-        if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-          val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-          val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-          Firebase.auth.signInWithCredential(authCredential).await()
+        val cred = credentialManager.getCredential(activityContext, request).credential
+        if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+          val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
+          Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
           onAuthSuccess()
         } else {
-          onAuthError("Unexpected credential type")
+          onAuthError("Unexpected credential type returned by Google Sign-In")
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: GetCredentialCancellationException) {
-        Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+        Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
         onAuthCancelled()
       } catch (e: Exception) {
-        Log.e(TAG, "Google Sign-In failed", e)
-        onAuthError(e.localizedMessage ?: "Sign in failed")
+        Log.e("Auth", "Google Sign-In failed", e)
+        onAuthError(e.localizedMessage ?: "Google Sign-In failed")
       }
     }
   }
@@ -139,9 +135,9 @@ object GoogleAuthHelper {
         try {
           credentialManager.clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {
-          Log.w(TAG, "Failed to clear credential state: ${e.message}")
+          Log.w("Auth", "Failed to clear credential state: ${e.message}")
         } finally {
-          Firebase.auth.signOut()
+          runCatching { Firebase.auth.signOut() }
           onSignOutComplete()
         }
       }

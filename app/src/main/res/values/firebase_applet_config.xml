@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources>
-    <!-- Provisioned Firestore database identifier -->
-    <string name="firestore_database_id" translatable="false">officezen-db</string>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-officeze-7dd93b37-6073-4473-9d46-73f59ebdea79</string>
 </resources>

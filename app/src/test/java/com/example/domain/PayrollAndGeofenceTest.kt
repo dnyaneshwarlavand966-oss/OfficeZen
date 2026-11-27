@@ -101,4 +101,54 @@ class PayrollAndGeofenceTest {
     val d = GeofenceValidator.haversineDistanceMeters(19.0760, 72.8777, 19.0769, 72.8777)
     assertTrue("Expected ~100m, got $d", d in 90.0..115.0)
   }
+
+  @Test
+  fun haversineDistance_verifies150mGeofenceBoundaryAndLargeCityOffset() {
+    // 1.35 km = 1350m? No, 150m boundary test around (18.5204, 73.8567)
+    val dInside = GeofenceValidator.haversineDistanceMeters(18.5204, 73.8567, 18.5215, 73.8567) // ~122m
+    val dOutside = GeofenceValidator.haversineDistanceMeters(18.5204, 73.8567, 18.5220, 73.8567) // ~178m
+    assertTrue("Expected <= 150m inside geofence, got $dInside", dInside <= 150.0)
+    assertTrue("Expected > 150m outside geofence, got $dOutside", dOutside > 150.0)
+
+    // Distance between Mumbai default (19.0760, 72.8777) and Nashik/Pune corridor (~138.5 km)
+    val dMumbaiToNashik = GeofenceValidator.haversineDistanceMeters(19.0760, 72.8777, 19.9975, 73.7898)
+    assertTrue("Expected > 135km between Mumbai default and Nashik, got $dMumbaiToNashik", dMumbaiToNashik in 135_000.0..145_000.0)
+  }
+
+  @Test
+  fun geofenceValidator_handlesInvalidUnsetAndAntipodalCoordinatesSafely() {
+    assertTrue(GeofenceValidator.isUnsetOfficeCoordinate(0.0, 0.0))
+    assertTrue(GeofenceValidator.isUnsetOfficeCoordinate(Double.NaN, 72.8777))
+    assertTrue(!GeofenceValidator.isUnsetOfficeCoordinate(18.5204, 73.8567))
+    assertTrue(GeofenceValidator.haversineDistanceMeters(Double.NaN, 0.0, 19.0, 72.0).isNaN())
+    val antipodal = GeofenceValidator.haversineDistanceMeters(0.0, 0.0, 0.0, 180.0)
+    assertTrue("Antipodal distance must be finite, got $antipodal", !antipodal.isNaN() && antipodal > 19_000_000.0)
+  }
+
+  @Test
+  fun checkInStatus_computesOnTimeLateAndHalfDayBoundaries() {
+    val shiftStart = 570L // 09:30 AM
+    val grace = 15L // 09:45 AM
+
+    val (onTimeStatus, onTimeLateMins) =
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(585L, shiftStart, grace)
+    assertEquals("on_time", onTimeStatus)
+    assertEquals(0L, onTimeLateMins)
+
+    val (lateStatus, lateMins) =
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(586L, shiftStart, grace)
+    assertEquals("late", lateStatus)
+    assertEquals(16L, lateMins)
+
+    val (edgeLateStatus, edgeLateMins) =
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(750L, shiftStart, grace)
+    assertEquals("late", edgeLateStatus)
+    assertEquals(180L, edgeLateMins)
+
+    // After 12:30 PM (> 570 + 180 = 750 min), status switches to half_day
+    val (halfDayStatus, halfDayLateMins) =
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(751L, shiftStart, grace)
+    assertEquals("half_day", halfDayStatus)
+    assertEquals(181L, halfDayLateMins)
+  }
 }

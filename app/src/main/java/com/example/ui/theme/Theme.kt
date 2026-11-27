@@ -2,7 +2,9 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -10,26 +12,31 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.example.localization.ThemeMode
 
 private val LightColorScheme =
   lightColorScheme(
-    primary = ZenTeal,
+    primary = EmeraldDeep,
     onPrimary = Color.White,
-    primaryContainer = SoftSage,
-    onPrimaryContainer = ZenTealDark,
-    secondary = SaffronAmber,
+    primaryContainer = EmeraldContainer,
+    onPrimaryContainer = EmeraldOnContainer,
+    secondary = Marigold,
     onSecondary = Color.White,
-    secondaryContainer = SaffronContainer,
-    onSecondaryContainer = OnSaffronContainer,
-    tertiary = ZenTealLight,
+    secondaryContainer = MarigoldSoft,
+    onSecondaryContainer = MarigoldInk,
+    tertiary = TeamCyan,
     onTertiary = Color.White,
-    background = WarmIvory,
-    onBackground = CharcoalInk,
-    surface = CardWhite,
-    onSurface = CharcoalInk,
-    surfaceVariant = SurfaceVariantWarm,
-    onSurfaceVariant = MutedSlate,
-    outline = OutlineWarm,
+    tertiaryContainer = TeamCyanBg,
+    onTertiaryContainer = EmeraldNight,
+    background = WarmAlabaster,
+    onBackground = ObsidianInk,
+    surface = AlabasterPure,
+    onSurface = ObsidianInk,
+    surfaceVariant = AlabasterSoft,
+    onSurfaceVariant = StoneMuted,
+    outline = AlabasterHairline,
+    outlineVariant = AlabasterHairline.copy(alpha = 0.65f),
     error = StatusRed,
     onError = Color.White,
     errorContainer = StatusRedBg,
@@ -38,25 +45,39 @@ private val LightColorScheme =
 
 private val DarkColorScheme =
   darkColorScheme(
-    primary = DarkTealPrimary,
-    onPrimary = ZenTealDark,
-    primaryContainer = DarkTealContainer,
-    onPrimaryContainer = SoftSage,
-    secondary = SaffronAmber,
-    onSecondary = Color.White,
-    secondaryContainer = OnSaffronContainer,
-    onSecondaryContainer = SaffronContainer,
-    background = DarkBackground,
+    primary = EmeraldLightPrimary,
+    onPrimary = Color(0xFF042622),
+    primaryContainer = EmeraldDarkContainer,
+    onPrimaryContainer = Color(0xFFCCFBF1),
+    secondary = MarigoldGlow,
+    onSecondary = Color(0xFF2B1702),
+    secondaryContainer = Color(0xFF472906),
+    onSecondaryContainer = MarigoldSoft,
+    tertiary = Color(0xFF5EEAD4),
+    onTertiary = Color(0xFF052E2B),
+    tertiaryContainer = Color(0xFF134E4A),
+    onTertiaryContainer = Color(0xFFCCFBF1),
+    background = ObsidianEmerald,
     onBackground = DarkInk,
-    surface = DarkSurface,
+    surface = ObsidianSurface,
     onSurface = DarkInk,
-    surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = DarkMutedSlate,
-    outline = DarkSurfaceVariant,
+    surfaceVariant = ObsidianSurfaceElevated,
+    onSurfaceVariant = DarkStoneMuted,
+    outline = ObsidianHairline,
+    outlineVariant = ObsidianHairline.copy(alpha = 0.7f),
     error = Color(0xFFFCA5A5),
-    onError = StatusRed,
+    onError = Color(0xFF450A0A),
     errorContainer = Color(0xFF450A0A),
     onErrorContainer = Color(0xFFFEE2E2),
+  )
+
+val OfficeZenShapes =
+  Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp),
   )
 
 @Composable
@@ -78,6 +99,26 @@ fun OfficeZenTheme(
   MaterialTheme(
     colorScheme = colorScheme,
     typography = Typography,
+    shapes = OfficeZenShapes,
+    content = content,
+  )
+}
+
+@Composable
+fun OfficeZenTheme(
+  themeMode: ThemeMode,
+  dynamicColor: Boolean = false,
+  content: @Composable () -> Unit,
+) {
+  val dark =
+    when (themeMode) {
+      ThemeMode.SYSTEM -> isSystemInDarkTheme()
+      ThemeMode.LIGHT -> false
+      ThemeMode.DARK -> true
+    }
+  OfficeZenTheme(
+    darkTheme = dark,
+    dynamicColor = dynamicColor,
     content = content,
   )
 }

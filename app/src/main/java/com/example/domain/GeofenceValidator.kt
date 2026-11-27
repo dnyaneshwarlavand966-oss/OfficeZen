@@ -18,17 +18,32 @@ data class GeofenceCheckResult(
 object GeofenceValidator {
   private const val EARTH_RADIUS_METERS = 6371000.0
 
+  fun isValidCoordinate(lat: Double, lng: Double): Boolean =
+    !lat.isNaN() &&
+      !lng.isNaN() &&
+      !lat.isInfinite() &&
+      !lng.isInfinite() &&
+      lat in -90.0..90.0 &&
+      lng in -180.0..180.0
+
+  fun isUnsetOfficeCoordinate(lat: Double, lng: Double): Boolean =
+    !isValidCoordinate(lat, lng) || (lat == 0.0 && lng == 0.0)
+
   fun haversineDistanceMeters(
     lat1: Double,
     lng1: Double,
     lat2: Double,
     lng2: Double,
   ): Double {
+    if (!isValidCoordinate(lat1, lng1) || !isValidCoordinate(lat2, lng2)) {
+      return Double.NaN
+    }
     val dLat = Math.toRadians(lat2 - lat1)
     val dLng = Math.toRadians(lng2 - lng1)
     val a =
-      sin(dLat / 2).pow(2) +
-        cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLng / 2).pow(2)
+      (sin(dLat / 2).pow(2) +
+        cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLng / 2).pow(2))
+        .coerceIn(0.0, 1.0)
     val c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return EARTH_RADIUS_METERS * c
   }
@@ -50,9 +65,9 @@ object GeofenceValidator {
   ): GeofenceCheckResult {
     val distance = haversineDistanceMeters(location.latitude, location.longitude, officeLat, officeLng)
     val mocked = isLocationMocked(location)
-    val within = distance <= radiusMeters.toDouble()
+    val within = !distance.isNaN() && distance <= radiusMeters.toDouble()
     return GeofenceCheckResult(
-      distanceMeters = distance,
+      distanceMeters = if (distance.isNaN()) 0.0 else distance,
       isWithinGeofence = within,
       isMockLocation = mocked,
     )

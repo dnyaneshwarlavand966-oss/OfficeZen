@@ -255,6 +255,31 @@ test("Attendance rejects mock locations and restricts employee list to self", as
   await assertSucceeds(
     mgrDb.collection("offices").doc(OFFICE_ID).collection("attendance").get()
   );
+
+  // Employee can update check-out fields matching WorkManager upload payload
+  await assertSucceeds(
+    empDb
+      .collection("offices")
+      .doc(OFFICE_ID)
+      .collection("attendance")
+      .doc("att_1")
+      .update({
+        checkOutEpochMs: 1763312400000,
+        overtimeMinutes: 45,
+        note: "Shift complete",
+        updatedAt: ts,
+      })
+  );
+
+  // Shadow fields (syncStatus / id) are rejected on create
+  await assertFails(
+    empDb
+      .collection("offices")
+      .doc(OFFICE_ID)
+      .collection("attendance")
+      .doc("att_shadow")
+      .set({ ...validAttendance, syncStatus: "pending" })
+  );
 });
 
 test("Leave approval: employee cannot approve own leave; manager can approve once", async () => {

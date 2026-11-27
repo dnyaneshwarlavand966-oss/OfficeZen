@@ -1,8 +1,9 @@
-// OfficeZen Firestore diagnostic error handler
+// Structured Firestore error logger (matches firebase-firestore-android observability contract)
 package com.example.data.remote
 
 import android.util.Log
-import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
@@ -28,11 +29,7 @@ fun handleFirestoreError(
       ?: causes.firstOrNull { it !is CancellationException }
       ?: exception
 
-  val currentUser = try {
-    FirebaseAuth.getInstance().currentUser
-  } catch (_: Exception) {
-    null
-  }
+  val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
 
   val providerInfoList =
     currentUser?.providerData?.map { provider ->

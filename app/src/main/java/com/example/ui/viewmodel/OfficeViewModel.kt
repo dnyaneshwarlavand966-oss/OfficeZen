@@ -1,4 +1,4 @@
-// OfficeZen main ViewModel state & actions
+// OfficeZen local ViewModel state & actions (Room + DataStore)
 package com.example.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
@@ -10,6 +10,8 @@ import com.example.data.model.Member
 import com.example.data.model.MemberRole
 import com.example.data.model.Office
 import com.example.data.model.OfficeDocument
+import com.example.data.model.OfficeSubscription
+import com.example.data.model.PaymentTransaction
 import com.example.data.model.PayrollProfile
 import com.example.data.model.SalaryAdjustment
 import com.example.data.model.TeaLog
@@ -17,9 +19,11 @@ import com.example.data.model.TeaPurchase
 import com.example.data.model.UserProfile
 import com.example.data.prefs.AppPreferences
 import com.example.data.repository.OfficeRepository
+import com.example.data.repository.SubscriptionRepository
 import com.example.domain.MonthEndSummary
 import com.example.domain.PayrollCalculator
-import com.google.firebase.firestore.FirebaseFirestoreException
+import com.example.localization.GlobalLocaleConfig
+import com.example.localization.ThemeMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -49,12 +54,10 @@ sealed interface UiState<out T> {
 class OfficeViewModel(
   private val repository: OfficeRepository,
   private val preferences: AppPreferences,
-  val currentUserId: String,
-  val userDisplayName: String,
-  val userEmail: String,
+  val currentUserId: String = OfficeRepository.LOCAL_DEFAULT_USER_ID,
+  private val onAttendanceQueuedForSync: (() -> Unit)? = null,
+  private val subscriptionRepository: SubscriptionRepository? = null,
 ) : ViewModel() {
-
-  private val _retryTrigger = MutableStateFlow(0)
 
   private val _selectedMonthKey = MutableStateFlow(currentMonthKey())
   val selectedMonthKey: StateFlow<String> = _selectedMonthKey.asStateFlow()
@@ -65,9 +68,6 @@ class OfficeViewModel(
   private val _onboardingError = MutableStateFlow<String?>(null)
   val onboardingError: StateFlow<String?> = _onboardingError.asStateFlow()
 
-  private val _profileSyncError = MutableStateFlow<String?>(null)
-  val profileSyncError: StateFlow<String?> = _profileSyncError.asStateFlow()
-
   private val _isBusy = MutableStateFlow(false)
   val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
 
@@ -77,14 +77,39 @@ class OfficeViewModel(
   val remindersEnabled: StateFlow<Boolean> =
     preferences.remindersEnabledFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), true)
 
-  val userProfileState: StateFlow<UiState<UserProfile?>> =
-    _retryTrigger
-      .flatMapLatest {
-        repository
-          .observeUserProfile(currentUserId)
-          .toUiState("Failed to load user profile")
-          .onStart { emit(UiState.Loading) }
+  val localUserName: StateFlow<String> =
+    preferences.localUserNameFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), "Office Owner")
+
+  val lastSyncEpochMsState: StateFlow<Long> =
+    preferences.lastSyncEpochMsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0L)
+
+  val lastSyncMessageState: StateFlow<String> =
+    preferences.lastSyncMessageFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), "")
+
+  val themeMode: StateFlow<ThemeMode> =
+    preferences.themeModeFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), ThemeMode.SYSTEM)
+
+  val globalLocaleConfig: StateFlow<GlobalLocaleConfig> =
+    preferences.globalLocaleConfigFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000L),
+      GlobalLocaleConfig.defaultFromSystem(),
+    )
+
+  val allOfficesState: StateFlow<List<Office>> =
+    repository
+      .observeAllOffices()
+      .catch { error ->
+        if (error is CancellationException) throw error
+        emit(emptyList())
       }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+  val userProfileState: StateFlow<UiState<UserProfile?>> =
+    repository
+      .observeUserProfile(currentUserId)
+      .toUiState("Failed to load local profile")
+      .onStart { emit(UiState.Loading) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), UiState.Loading)
 
   private val activeOfficeIdFlow: Flow<String> =
@@ -93,14 +118,14 @@ class OfficeViewModel(
     }
 
   val officeState: StateFlow<UiState<Office?>> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) {
           flowOf(UiState.Success(null))
         } else {
           repository
             .observeOffice(officeId)
-            .toUiState("Failed to load office workspace")
+            .toUiState("Failed to load local office workspace")
             .onStart { emit(UiState.Loading) }
         }
       }
@@ -110,21 +135,15 @@ class OfficeViewModel(
     get() = (officeState.value as? UiState.Success)?.data
 
   val myMemberState: StateFlow<Member?> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(null)
-        else repository.observeMyMember(officeId, currentUserId).catchToNull("Failed to load member role")
+        else repository.observeMyMember(officeId, currentUserId).catchToNull("Failed to load member")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
 
-  private val isManagerOrOwnerFlow: Flow<Boolean> =
-    myMemberState.map { member ->
-      val role = member?.roleEnum
-      role == MemberRole.OWNER || role == MemberRole.MANAGER
-    }
-
   val membersState: StateFlow<List<Member>> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
         else repository.observeMembers(officeId).catchToEmptyList("Failed to load team members")
@@ -132,55 +151,71 @@ class OfficeViewModel(
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val payrollProfilesState: StateFlow<List<PayrollProfile>> =
-    combine(activeOfficeIdFlow, isManagerOrOwnerFlow, _retryTrigger) { officeId, mgr, _ ->
-      officeId to mgr
-    }
-      .flatMapLatest { (officeId, mgr) ->
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observePayrollProfiles(officeId, mgr).catchToEmptyList("Failed to load payroll profiles")
+        else repository.observePayrollProfiles(officeId).catchToEmptyList("Failed to load payroll profiles")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val attendanceState: StateFlow<List<AttendanceRecord>> =
-    combine(activeOfficeIdFlow, isManagerOrOwnerFlow, _retryTrigger) { officeId, mgr, _ ->
-      officeId to mgr
-    }
-      .flatMapLatest { (officeId, mgr) ->
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observeAttendance(officeId, mgr).catchToEmptyList("Failed to load attendance records")
+        else repository.observeAttendance(officeId).catchToEmptyList("Failed to load attendance")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
+  val pendingAttendanceCountState: StateFlow<Int> =
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
+        if (officeId.isBlank()) repository.observeAllPendingAttendanceCount()
+        else repository.observePendingAttendanceCount(officeId)
+      }
+      .catch { error ->
+        if (error is CancellationException) throw error
+        emit(0)
+      }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
+
+  val syncedAttendanceCountState: StateFlow<Int> =
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
+        if (officeId.isBlank()) flowOf(0)
+        else repository.observeSyncedAttendanceCount(officeId)
+      }
+      .catch { error ->
+        if (error is CancellationException) throw error
+        emit(0)
+      }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
+
   val leavesState: StateFlow<List<LeaveRequest>> =
-    combine(activeOfficeIdFlow, isManagerOrOwnerFlow, _retryTrigger) { officeId, mgr, _ ->
-      officeId to mgr
-    }
-      .flatMapLatest { (officeId, mgr) ->
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observeLeaves(officeId, mgr).catchToEmptyList("Failed to load leave requests")
+        else repository.observeLeaves(officeId).catchToEmptyList("Failed to load leave requests")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val salaryAdjustmentsState: StateFlow<List<SalaryAdjustment>> =
-    combine(activeOfficeIdFlow, isManagerOrOwnerFlow, _retryTrigger) { officeId, mgr, _ ->
-      officeId to mgr
-    }
-      .flatMapLatest { (officeId, mgr) ->
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observeSalaryAdjustments(officeId, mgr).catchToEmptyList("Failed to load salary adjustments")
+        else repository.observeSalaryAdjustments(officeId).catchToEmptyList("Failed to load adjustments")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val teaLogsState: StateFlow<List<TeaLog>> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observeTeaLogs(officeId).catchToEmptyList("Failed to load tea/coffee logs")
+        else repository.observeTeaLogs(officeId).catchToEmptyList("Failed to load tea logs")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val teaPurchasesState: StateFlow<List<TeaPurchase>> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
         else repository.observeTeaPurchases(officeId).catchToEmptyList("Failed to load pantry purchases")
@@ -188,20 +223,36 @@ class OfficeViewModel(
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val documentsState: StateFlow<List<OfficeDocument>> =
-    combine(activeOfficeIdFlow, _retryTrigger) { officeId, _ -> officeId }
+    activeOfficeIdFlow
       .flatMapLatest { officeId ->
         if (officeId.isBlank()) flowOf(emptyList())
-        else repository.observeDocuments(officeId).catchToEmptyList("Failed to load document register")
+        else repository.observeDocuments(officeId).catchToEmptyList("Failed to load documents")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
   val auditLogsState: StateFlow<List<AuditLog>> =
-    combine(activeOfficeIdFlow, isManagerOrOwnerFlow, _retryTrigger) { officeId, mgr, _ ->
-      officeId to mgr
-    }
-      .flatMapLatest { (officeId, mgr) ->
-        if (officeId.isBlank() || !mgr) flowOf(emptyList())
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
+        if (officeId.isBlank()) flowOf(emptyList())
         else repository.observeAuditLogs(officeId).catchToEmptyList("Failed to load audit logs")
+      }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+  val subscriptionState: StateFlow<OfficeSubscription?> =
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
+        val subRepo = subscriptionRepository
+        if (officeId.isBlank() || subRepo == null) flowOf(null)
+        else subRepo.observeSubscription(officeId).catchToNull("Failed to load subscription")
+      }
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+  val paymentHistoryState: StateFlow<List<PaymentTransaction>> =
+    activeOfficeIdFlow
+      .flatMapLatest { officeId ->
+        val subRepo = subscriptionRepository
+        if (officeId.isBlank() || subRepo == null) flowOf(emptyList())
+        else subRepo.observePaymentHistory(officeId).catchToEmptyList("Failed to load payment history")
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
@@ -248,30 +299,15 @@ class OfficeViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
 
   init {
-    syncUserProfile()
-  }
-
-  private fun syncUserProfile() {
     viewModelScope.launch {
-      _profileSyncError.value = null
-      repository
-        .ensureUserProfile(
-          displayName = userDisplayName,
-          email = userEmail,
-          preferredLanguage = languageCode.value,
-        )
-        .onFailure { error ->
-          val msg = OfficeRepository.friendlyErrorMessage(error, "Failed to initialize user profile in Firestore.")
-          _profileSyncError.value = msg
-          _bannerMessage.value = msg
-        }
+      val name = preferences.localUserNameFlow.first()
+      val lang = preferences.languageCodeFlow.first()
+      repository.ensureUserProfile(
+        uid = currentUserId,
+        displayName = name,
+        preferredLanguage = lang,
+      )
     }
-  }
-
-  fun retryConnection() {
-    _onboardingError.value = null
-    syncUserProfile()
-    _retryTrigger.value += 1
   }
 
   fun clearOnboardingError() {
@@ -286,6 +322,13 @@ class OfficeViewModel(
     _bannerMessage.value = msg
   }
 
+  fun triggerAttendanceSync() {
+    viewModelScope.launch {
+      repository.retryFailedAttendance()
+      onAttendanceQueuedForSync?.invoke()
+    }
+  }
+
   fun setMonthKey(monthKey: String) {
     _selectedMonthKey.value = monthKey
   }
@@ -293,9 +336,7 @@ class OfficeViewModel(
   fun setLanguage(code: String) {
     viewModelScope.launch {
       preferences.setLanguageCode(code)
-      repository.updatePreferredLanguage(code).onFailure {
-        _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to sync language setting")
-      }
+      repository.updatePreferredLanguage(currentUserId, code)
     }
   }
 
@@ -305,6 +346,7 @@ class OfficeViewModel(
 
   fun createOffice(
     officeName: String,
+    ownerDisplayName: String,
     ownerPhone: String,
     officeLat: Double,
     officeLng: Double,
@@ -316,11 +358,14 @@ class OfficeViewModel(
   ) {
     _onboardingError.value = null
     launchBusy {
+      val cleanOwner = ownerDisplayName.trim().ifBlank { localUserName.value }
+      preferences.setLocalUserName(cleanOwner)
       repository
         .createOffice(
+          uid = currentUserId,
           officeName = officeName,
-          ownerDisplayName = userDisplayName.ifBlank { userEmail.substringBefore("@") },
-          ownerEmail = userEmail,
+          ownerDisplayName = cleanOwner,
+          ownerEmail = "",
           ownerPhone = ownerPhone,
           officeLat = officeLat,
           officeLng = officeLng,
@@ -333,7 +378,7 @@ class OfficeViewModel(
         )
         .onSuccess {
           _onboardingError.value = null
-          _bannerMessage.value = "Office created! Invite code: ${it.inviteCode}"
+          _bannerMessage.value = "Office '${it.name}' saved locally!"
         }
         .onFailure {
           val msg = OfficeRepository.friendlyErrorMessage(it, "Failed to create office")
@@ -347,29 +392,34 @@ class OfficeViewModel(
     _onboardingError.value = null
     launchBusy {
       repository
-        .joinOfficeByInviteCode(
+        .joinLocalOfficeByInviteCode(
+          uid = currentUserId,
           rawCode = inviteCode,
-          displayName = userDisplayName.ifBlank { userEmail.substringBefore("@") },
-          email = userEmail,
+          displayName = localUserName.value,
           phone = phone,
           designation = designation,
-          preferredLanguage = languageCode.value,
         )
         .onSuccess {
           _onboardingError.value = null
-          _bannerMessage.value = "Joined office successfully!"
+          _bannerMessage.value = "Opened local office!"
         }
         .onFailure {
-          val msg = OfficeRepository.friendlyErrorMessage(it, "Could not join office")
+          val msg = OfficeRepository.friendlyErrorMessage(it, "Could not open office")
           _onboardingError.value = msg
           _bannerMessage.value = msg
         }
     }
   }
 
+  fun selectExistingOffice(officeId: String) {
+    launchBusy {
+      repository.switchActiveOffice(currentUserId, officeId)
+    }
+  }
+
   fun switchWorkspace() {
     launchBusy {
-      repository.leaveActiveOfficeWorkspace().onFailure {
+      repository.leaveActiveOfficeWorkspace(currentUserId).onFailure {
         _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to switch workspace")
       }
     }
@@ -379,9 +429,39 @@ class OfficeViewModel(
     val actor = myMemberState.value ?: return
     launchBusy {
       repository
-        .updateOfficeSettings(updated, actor.displayName, actor.roleEnum)
+        .updateOfficeSettings(updated, currentUserId, actor.displayName, actor.roleEnum)
         .onSuccess { _bannerMessage.value = "Office settings saved" }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to save settings") }
+    }
+  }
+
+  fun addLocalMember(
+    displayName: String,
+    designation: String,
+    role: MemberRole,
+    monthlySalaryInr: Double,
+    overtimeHourlyRateInr: Double,
+    phone: String,
+  ) {
+    val office = currentOffice ?: return
+    val actor = myMemberState.value ?: return
+    launchBusy {
+      repository
+        .addLocalMember(
+          officeId = office.id,
+          ownerId = office.ownerId,
+          displayName = displayName,
+          designation = designation,
+          role = role,
+          monthlySalaryInr = monthlySalaryInr,
+          overtimeHourlyRateInr = overtimeHourlyRateInr,
+          phone = phone,
+          actorUid = currentUserId,
+          actorName = actor.displayName,
+          actorRole = actor.roleEnum,
+        )
+        .onSuccess { _bannerMessage.value = "Added ${it.displayName} to team" }
+        .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to add staff") }
     }
   }
 
@@ -409,6 +489,7 @@ class OfficeViewModel(
           overtimeHourlyRateInr = overtimeHourlyRateInr,
           phone = phone,
           email = email,
+          actorUid = currentUserId,
           actorName = actor.displayName,
           actorRole = actor.roleEnum,
         )
@@ -428,16 +509,12 @@ class OfficeViewModel(
     val office = currentOffice ?: return
     val actor = myMemberState.value ?: return
     val nowMs = System.currentTimeMillis()
-    val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
-    val currentMinutes = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60L + cal.get(java.util.Calendar.MINUTE)
-    val lateCutoff = office.shiftStartMinutes + office.lateGraceMinutes
-    val lateMins = (currentMinutes - office.shiftStartMinutes).coerceAtLeast(0L)
-    val status =
-      when {
-        currentMinutes > office.shiftStartMinutes + 180L -> "half_day"
-        currentMinutes > lateCutoff -> "late"
-        else -> "on_time"
-      }
+    val (status, lateMins) =
+      computeCheckInStatus(
+        nowMs = nowMs,
+        shiftStartMinutes = office.shiftStartMinutes,
+        lateGraceMinutes = office.lateGraceMinutes,
+      )
 
     launchBusy {
       repository
@@ -462,7 +539,10 @@ class OfficeViewModel(
             ),
           actorRole = actor.roleEnum,
         )
-        .onSuccess { _bannerMessage.value = "Checked in ($status)" }
+        .onSuccess {
+          onAttendanceQueuedForSync?.invoke()
+          _bannerMessage.value = "Checked in ($status) · Queued for Firestore sync"
+        }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Check-in failed") }
     }
   }
@@ -482,10 +562,14 @@ class OfficeViewModel(
           checkOutEpochMs = nowMs,
           overtimeMinutes = overtimeMins,
           note = note,
+          actorUid = currentUserId,
           actorName = actor.displayName,
           actorRole = actor.roleEnum,
         )
-        .onSuccess { _bannerMessage.value = "Checked out! Overtime: ${overtimeMins}m" }
+        .onSuccess {
+          onAttendanceQueuedForSync?.invoke()
+          _bannerMessage.value = "Checked out! Overtime: ${overtimeMins}m · Queued for sync"
+        }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Check-out failed") }
     }
   }
@@ -516,7 +600,7 @@ class OfficeViewModel(
             ),
           actorRole = actor.roleEnum,
         )
-        .onSuccess { _bannerMessage.value = "Leave request submitted" }
+        .onSuccess { _bannerMessage.value = "Leave request saved" }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Leave request failed") }
     }
   }
@@ -526,7 +610,7 @@ class OfficeViewModel(
     val actor = myMemberState.value ?: return
     launchBusy {
       repository
-        .reviewLeave(office.id, leave, approved, reviewNote, actor.displayName, actor.roleEnum)
+        .reviewLeave(office.id, leave, approved, reviewNote, currentUserId, actor.displayName, actor.roleEnum)
         .onSuccess {
           _bannerMessage.value = if (approved) "Leave approved" else "Leave rejected"
         }
@@ -552,6 +636,7 @@ class OfficeViewModel(
           type = type,
           amountInr = amountInr,
           note = note,
+          actorUid = currentUserId,
           actorName = actor.displayName,
           actorRole = actor.roleEnum,
         )
@@ -568,6 +653,7 @@ class OfficeViewModel(
       repository
         .logTeaOrCoffee(
           officeId = office.id,
+          userId = currentUserId,
           userName = actor.displayName,
           item = item,
           quantity = 1L,
@@ -582,9 +668,8 @@ class OfficeViewModel(
   }
 
   fun deleteTeaLog(logId: String) {
-    val office = currentOffice ?: return
     viewModelScope.launch {
-      repository.deleteTeaLog(office.id, logId).onFailure {
+      repository.deleteTeaLog(logId).onFailure {
         _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to delete log")
       }
     }
@@ -597,6 +682,7 @@ class OfficeViewModel(
       repository
         .addTeaPurchase(
           officeId = office.id,
+          addedByUid = currentUserId,
           addedByName = actor.displayName,
           category = category,
           quantityLabel = quantityLabel,
@@ -606,7 +692,7 @@ class OfficeViewModel(
           note = note,
           actorRole = actor.roleEnum,
         )
-        .onSuccess { _bannerMessage.value = "Pantry purchase recorded" }
+        .onSuccess { _bannerMessage.value = "Pantry purchase saved" }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Failed to record purchase") }
     }
   }
@@ -656,9 +742,20 @@ class OfficeViewModel(
     val actor = myMemberState.value ?: return
     viewModelScope.launch {
       repository
-        .updateDocumentStatus(office.id, doc, newStatus, actor.displayName, actor.roleEnum)
+        .updateDocumentStatus(office.id, doc, newStatus, currentUserId, actor.displayName, actor.roleEnum)
         .onSuccess { _bannerMessage.value = "${doc.serialNo} marked $newStatus" }
         .onFailure { _bannerMessage.value = OfficeRepository.friendlyErrorMessage(it, "Update failed") }
+    }
+  }
+
+  fun setThemeMode(mode: ThemeMode) {
+    viewModelScope.launch { preferences.setThemeMode(mode) }
+  }
+
+  fun updateGlobalLocaleConfig(config: GlobalLocaleConfig) {
+    viewModelScope.launch {
+      preferences.setGlobalLocaleConfig(config)
+      _bannerMessage.value = "Updated regional settings (${config.currencyCode} · ${config.timeZoneId})"
     }
   }
 
@@ -675,32 +772,20 @@ class OfficeViewModel(
 
   private fun <T> Flow<T>.toUiState(fallbackMsg: String): Flow<UiState<T>> =
     map<T, UiState<T>> { UiState.Success(it) }.catch { error ->
-      val firestoreError =
-        generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-      if (firestoreError == null && error is CancellationException) throw error
+      if (error is CancellationException) throw error
       emit(UiState.Error(OfficeRepository.friendlyErrorMessage(error, fallbackMsg)))
     }
 
   private fun <T> Flow<T?>.catchToNull(fallbackMsg: String): Flow<T?> =
     catch { error ->
-      val firestoreError =
-        generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-      if (firestoreError == null && error is CancellationException) throw error
+      if (error is CancellationException) throw error
       _bannerMessage.value = OfficeRepository.friendlyErrorMessage(error, fallbackMsg)
       emit(null)
     }
 
   private fun <T> Flow<List<T>>.catchToEmptyList(fallbackMsg: String): Flow<List<T>> =
     catch { error ->
-      val firestoreError =
-        generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-      if (firestoreError == null && error is CancellationException) throw error
+      if (error is CancellationException) throw error
       _bannerMessage.value = OfficeRepository.friendlyErrorMessage(error, fallbackMsg)
       emit(emptyList())
     }
@@ -711,5 +796,36 @@ class OfficeViewModel(
 
     fun currentMonthKey(): String =
       SimpleDateFormat("yyyy-MM", Locale.US).format(Date())
+
+    fun computeCheckInStatus(
+      nowMs: Long,
+      shiftStartMinutes: Long,
+      lateGraceMinutes: Long,
+    ): Pair<String, Long> {
+      val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
+      val currentMinutes =
+        cal.get(java.util.Calendar.HOUR_OF_DAY) * 60L + cal.get(java.util.Calendar.MINUTE)
+      return computeCheckInStatusForMinutes(
+        currentMinutes = currentMinutes,
+        shiftStartMinutes = shiftStartMinutes,
+        lateGraceMinutes = lateGraceMinutes,
+      )
+    }
+
+    fun computeCheckInStatusForMinutes(
+      currentMinutes: Long,
+      shiftStartMinutes: Long,
+      lateGraceMinutes: Long,
+    ): Pair<String, Long> {
+      val lateCutoff = shiftStartMinutes + lateGraceMinutes
+      val lateMins = (currentMinutes - shiftStartMinutes).coerceAtLeast(0L)
+      val status =
+        when {
+          currentMinutes > shiftStartMinutes + 180L -> "half_day"
+          currentMinutes > lateCutoff -> "late"
+          else -> "on_time"
+        }
+      return status to if (status == "on_time") 0L else lateMins
+    }
   }
 }

@@ -1,10 +1,5 @@
-// OfficeZen domain & Firestore models
+// OfficeZen pure Kotlin domain models (device-local Room persistence)
 package com.example.data.model
-
-import com.google.firebase.Timestamp
-import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.IgnoreExtraProperties
-import com.google.firebase.firestore.ServerTimestamp
 
 enum class MemberRole(val wire: String) {
   OWNER("owner"),
@@ -17,31 +12,19 @@ enum class MemberRole(val wire: String) {
   }
 }
 
-@IgnoreExtraProperties
 data class UserProfile(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val displayName: String = "",
   val email: String = "",
   val activeOfficeId: String = "",
   val preferredLanguage: String = "en",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
-data class OfficeInvite(
-  @DocumentId val id: String = "",
-  val inviteCode: String = "",
-  val officeId: String = "",
-  val officeName: String = "",
-  val ownerId: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-)
-
-@IgnoreExtraProperties
 data class Office(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val ownerId: String = "",
   val name: String = "",
   val inviteCode: String = "",
@@ -59,13 +42,12 @@ data class Office(
   val ownerWhatsappPhone: String = "",
   val teaDefaultPriceInr: Double = 12.0,
   val coffeeDefaultPriceInr: Double = 20.0,
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class Member(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val ownerId: String = "",
@@ -73,15 +55,14 @@ data class Member(
   val designation: String = "",
   val role: String = MemberRole.EMPLOYEE.wire,
   val active: Boolean = true,
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 ) {
   val roleEnum: MemberRole get() = MemberRole.fromWire(role)
 }
 
-@IgnoreExtraProperties
 data class PayrollProfile(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val ownerId: String = "",
@@ -89,13 +70,19 @@ data class PayrollProfile(
   val overtimeHourlyRateInr: Double = 0.0,
   val phone: String = "",
   val email: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
+object AttendanceSyncStatus {
+  const val PENDING = "pending"
+  const val SYNCING = "syncing"
+  const val SYNCED = "synced"
+  const val FAILED = "failed"
+}
+
 data class AttendanceRecord(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val userName: String = "",
@@ -112,13 +99,15 @@ data class AttendanceRecord(
   val overtimeMinutes: Long = 0L,
   val selfieBase64: String = "",
   val note: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val syncStatus: String = AttendanceSyncStatus.PENDING,
+  val lastSyncAttemptEpochMs: Long = 0L,
+  val syncError: String = "",
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class LeaveRequest(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val userName: String = "",
@@ -130,13 +119,12 @@ data class LeaveRequest(
   val status: String = "pending",
   val reviewedBy: String = "",
   val reviewNote: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class SalaryAdjustment(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val monthKey: String = "",
@@ -144,13 +132,12 @@ data class SalaryAdjustment(
   val amountInr: Double = 0.0,
   val note: String = "",
   val addedBy: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class TeaLog(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val userId: String = "",
   val officeId: String = "",
   val userName: String = "",
@@ -159,12 +146,11 @@ data class TeaLog(
   val unitCostInr: Double = 12.0,
   val dateKey: String = "",
   val monthKey: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class TeaPurchase(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val officeId: String = "",
   val addedBy: String = "",
   val addedByName: String = "",
@@ -174,12 +160,11 @@ data class TeaPurchase(
   val dateKey: String = "",
   val monthKey: String = "",
   val note: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class OfficeDocument(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val officeId: String = "",
   val createdBy: String = "",
   val createdByName: String = "",
@@ -191,18 +176,17 @@ data class OfficeDocument(
   val status: String = "received",
   val scanBase64: String = "",
   val note: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
-  @ServerTimestamp val updatedAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 )
 
-@IgnoreExtraProperties
 data class AuditLog(
-  @DocumentId val id: String = "",
+  val id: String = "",
   val officeId: String = "",
   val actorUid: String = "",
   val actorName: String = "",
   val actorRole: String = MemberRole.EMPLOYEE.wire,
   val actionType: String = "",
   val summary: String = "",
-  @ServerTimestamp val createdAt: Timestamp? = null,
+  val createdAtEpochMs: Long = 0L,
 )

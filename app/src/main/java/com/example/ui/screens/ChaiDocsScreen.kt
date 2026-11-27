@@ -1,4 +1,4 @@
-// OfficeZen chai/coffee tracker & inward/outward document register screen
+// OfficeZen pantry counter & inward/outward document ledger screen
 package com.example.ui.screens
 
 import android.Manifest
@@ -6,8 +6,9 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -30,24 +32,22 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Coffee
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.LocalCafe
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,14 +60,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.R
 import com.example.data.model.Member
 import com.example.data.model.MemberRole
 import com.example.data.model.Office
@@ -80,13 +84,23 @@ import com.example.localization.LocalAppStrings
 import com.example.ui.components.CameraCaptureDialog
 import com.example.ui.components.EmptyPlaceholderCard
 import com.example.ui.components.SectionHeader
+import com.example.ui.components.SegmentedTabItem
 import com.example.ui.components.StatusPill
-import com.example.ui.theme.SaffronContainer
+import com.example.ui.components.ZenCard
+import com.example.ui.components.ZenSegmentedTabs
+import com.example.ui.theme.ChaiCream
+import com.example.ui.theme.ChaiInk
+import com.example.ui.theme.ChaiTerracotta
+import com.example.ui.theme.EditorialSerifFontFamily
+import com.example.ui.theme.EspressoBg
+import com.example.ui.theme.EspressoBrown
+import com.example.ui.theme.LedgerIndigo
+import com.example.ui.theme.LedgerIndigoBg
+import com.example.ui.theme.MonoFontFamily
 import com.example.ui.theme.StatusAmber
 import com.example.ui.theme.StatusAmberBg
 import com.example.ui.theme.StatusGreen
 import com.example.ui.theme.StatusGreenBg
-import com.example.ui.viewmodel.OfficeViewModel
 import kotlin.math.roundToInt
 
 @Composable
@@ -105,17 +119,16 @@ fun ChaiDocsScreen(
   onUpdateDocumentStatus: (OfficeDocument, String) -> Unit,
 ) {
   val strings = LocalAppStrings.current
-  val context = LocalContext.current
   val isManagerOrOwner =
     me?.roleEnum == MemberRole.OWNER || me?.roleEnum == MemberRole.MANAGER
 
-  var subTab by remember(initialSubTab) { mutableIntStateOf(initialSubTab) } // 0 = Chai, 1 = Docs
+  var subTab by remember(initialSubTab) { mutableIntStateOf(initialSubTab) }
   var showPurchaseDialog by remember { mutableStateOf(false) }
   var showAddDocDialog by remember { mutableStateOf(false) }
   var previewScanDoc by remember { mutableStateOf<OfficeDocument?>(null) }
 
   var docSearch by remember { mutableStateOf("") }
-  var docFilter by remember { mutableStateOf("all") } // all, inward, outward
+  var docFilter by remember { mutableStateOf("all") }
 
   if (showPurchaseDialog) {
     AddPurchaseDialog(
@@ -141,19 +154,34 @@ fun ChaiDocsScreen(
     val bmp = remember(doc.scanBase64) { LocationAndImageHelper.decodeBase64(doc.scanBase64) }
     AlertDialog(
       onDismissRequest = { previewScanDoc = null },
-      title = { Text("${doc.serialNo} · ${doc.subject}") },
+      shape = RoundedCornerShape(24.dp),
+      title = {
+        Text(
+          text = "${doc.serialNo} · ${doc.subject}",
+          style = MaterialTheme.typography.titleLarge,
+        )
+      },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          Text("${doc.direction.uppercase()} · ${doc.partyName} · ${doc.dateKey}")
+          Text(
+            text = "${doc.direction.uppercase()} · ${doc.partyName} · ${doc.dateKey}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = MonoFontFamily,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
           if (bmp != null) {
             Image(
               bitmap = bmp.asImageBitmap(),
               contentDescription = "Document scan",
-              modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(14.dp)),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .height(250.dp)
+                  .clip(RoundedCornerShape(16.dp))
+                  .border(0.75.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp)),
               contentScale = ContentScale.Fit,
             )
           }
-          Text("Status: ${doc.status}")
+          Text("Update Status", style = MaterialTheme.typography.labelLarge)
           Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("pending", "received", "dispatched", "archived").forEach { st ->
               FilterChip(
@@ -177,71 +205,114 @@ fun ChaiDocsScreen(
   Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     LazyColumn(
       modifier = Modifier.widthIn(max = 700.dp).fillMaxSize(),
-      contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-      verticalArrangement = Arrangement.spacedBy(14.dp),
+      contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 32.dp),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       item {
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-          SegmentedButton(
-            selected = subTab == 0,
-            onClick = { subTab = 0 },
-            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-            modifier = Modifier.testTag("subtab_chai"),
-          ) {
-            Text("${strings.tea} / ${strings.coffee}", maxLines = 1)
-          }
-          SegmentedButton(
-            selected = subTab == 1,
-            onClick = { subTab = 1 },
-            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-            modifier = Modifier.testTag("subtab_docs"),
-          ) {
-            Text("${strings.inward} / ${strings.outward}", maxLines = 1)
-          }
-        }
+        ZenSegmentedTabs(
+          items =
+            listOf(
+              SegmentedTabItem(
+                label = "${strings.tea} / ${strings.coffee}",
+                testTag = "subtab_chai",
+              ),
+              SegmentedTabItem(
+                label = "${strings.inward} / ${strings.outward}",
+                testTag = "subtab_docs",
+              ),
+            ),
+          selectedIndex = subTab,
+          onSelect = { subTab = it },
+        )
       }
 
       if (subTab == 0) {
-        // 1-Tap Tea & Coffee Card
+        // Warm Editorial Chai Counter Card
         item {
-          Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(22.dp),
+          ZenCard(
+            cornerRadius = 24.dp,
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
               modifier = Modifier.padding(18.dp),
-              verticalArrangement = Arrangement.spacedBy(12.dp),
+              verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-              Text("Tap once to log your cup", style = MaterialTheme.typography.titleLarge)
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Image(
+                  painter = painterResource(id = R.drawable.img_chai_banner_1795504692697),
+                  contentDescription = "Office pantry chai and coffee",
+                  contentScale = ContentScale.Crop,
+                  modifier =
+                    Modifier
+                      .size(72.dp)
+                      .clip(RoundedCornerShape(16.dp))
+                      .border(0.75.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp)),
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                  Text(
+                    text = "PANTRY COUNTER",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = MonoFontFamily,
+                    color = ChaiTerracotta,
+                  )
+                  Text(
+                    text = "1-Tap Chai & Coffee",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontFamily = EditorialSerifFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = "Tap once to log a cup for ${me?.displayName ?: "team"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
               ) {
                 Button(
                   onClick = { onOneTapTea("tea") },
-                  modifier = Modifier.weight(1f).height(64.dp).testTag("chai_log_tea_button"),
+                  colors =
+                    ButtonDefaults.buttonColors(
+                      containerColor = ChaiTerracotta,
+                      contentColor = Color.White,
+                    ),
+                  modifier = Modifier.weight(1f).height(58.dp).testTag("chai_log_tea_button"),
                   shape = RoundedCornerShape(16.dp),
                 ) {
                   Icon(Icons.Rounded.Coffee, contentDescription = null)
                   Spacer(Modifier.width(8.dp))
-                  Text(strings.logTea, style = MaterialTheme.typography.titleMedium)
+                  Text(strings.logTea, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                FilledTonalButton(
+                Button(
                   onClick = { onOneTapTea("coffee") },
-                  modifier = Modifier.weight(1f).height(64.dp).testTag("chai_log_coffee_button"),
+                  colors =
+                    ButtonDefaults.buttonColors(
+                      containerColor = EspressoBg,
+                      contentColor = EspressoBrown,
+                    ),
+                  border = BorderStroke(0.75.dp, EspressoBrown.copy(alpha = 0.28f)),
+                  modifier = Modifier.weight(1f).height(58.dp).testTag("chai_log_coffee_button"),
                   shape = RoundedCornerShape(16.dp),
                 ) {
                   Icon(Icons.Rounded.LocalCafe, contentDescription = null)
                   Spacer(Modifier.width(8.dp))
-                  Text(strings.logCoffee, style = MaterialTheme.typography.titleMedium)
+                  Text(strings.logCoffee, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
               }
 
               if (monthEndSummary != null) {
                 Surface(
-                  color = SaffronContainer,
+                  color = ChaiCream,
                   shape = RoundedCornerShape(14.dp),
+                  border = BorderStroke(0.75.dp, ChaiTerracotta.copy(alpha = 0.22f)),
                   modifier = Modifier.fillMaxWidth(),
                 ) {
                   Row(
@@ -249,19 +320,33 @@ fun ChaiDocsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                   ) {
                     Column {
-                      Text("Monthly Cups", style = MaterialTheme.typography.labelMedium)
                       Text(
-                        "${monthEndSummary.totalTeaCups} Tea · ${monthEndSummary.totalCoffeeCups} Coffee",
+                        text = "MONTHLY CUPS",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = MonoFontFamily,
+                        color = ChaiInk.copy(alpha = 0.72f),
+                      )
+                      Text(
+                        text = "${monthEndSummary.totalTeaCups} Tea · ${monthEndSummary.totalCoffeeCups} Coffee",
                         style = MaterialTheme.typography.titleMedium,
+                        fontFamily = MonoFontFamily,
                         fontWeight = FontWeight.Bold,
+                        color = ChaiInk,
                       )
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                      Text("Total Spend", style = MaterialTheme.typography.labelMedium)
                       Text(
-                        "₹${monthEndSummary.totalPantryPurchaseInr.roundToInt()} (₹${monthEndSummary.effectiveCostPerCupInr}/cup)",
+                        text = "TOTAL SPEND",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = MonoFontFamily,
+                        color = ChaiInk.copy(alpha = 0.72f),
+                      )
+                      Text(
+                        text = "₹${monthEndSummary.totalPantryPurchaseInr.roundToInt()} (₹${monthEndSummary.effectiveCostPerCupInr}/cup)",
                         style = MaterialTheme.typography.titleMedium,
+                        fontFamily = MonoFontFamily,
                         fontWeight = FontWeight.Bold,
+                        color = ChaiTerracotta,
                       )
                     }
                   }
@@ -271,9 +356,11 @@ fun ChaiDocsScreen(
               if (isManagerOrOwner) {
                 OutlinedButton(
                   onClick = { showPurchaseDialog = true },
-                  modifier = Modifier.fillMaxWidth().height(50.dp).testTag("add_pantry_purchase_button"),
+                  shape = RoundedCornerShape(14.dp),
+                  border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outline),
+                  modifier = Modifier.fillMaxWidth().height(48.dp).testTag("add_pantry_purchase_button"),
                 ) {
-                  Icon(Icons.Rounded.ShoppingBag, contentDescription = null)
+                  Icon(Icons.Rounded.ShoppingBag, contentDescription = null, modifier = Modifier.size(18.dp))
                   Spacer(Modifier.width(8.dp))
                   Text("${strings.addPurchase} (Milk, Sugar, Tea Powder)")
                 }
@@ -282,40 +369,74 @@ fun ChaiDocsScreen(
           }
         }
 
-        // Per-Employee Tea Cost Share
+        // Per-Employee Tea Cost Share grouped list
         if (monthEndSummary != null && monthEndSummary.employeePayrolls.isNotEmpty()) {
           item {
-            SectionHeader(title = "Per-Employee Tea/Coffee Cost", subtitle = "Monthly cups & estimated cost")
+            SectionHeader(
+              title = "Per-Employee Pantry Share",
+              subtitle = "Monthly cups & estimated cost",
+              trailingBadge = "${monthEndSummary.employeePayrolls.size} staff",
+            )
           }
-          items(monthEndSummary.employeePayrolls, key = { "tea_${it.member.userId}" }) { row ->
-            Card(
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-              shape = RoundedCornerShape(16.dp),
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Row(
-                modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Text(row.member.displayName, style = MaterialTheme.typography.titleMedium)
-                Text(
-                  "${row.teaCups} cups · ₹${row.teaEstimatedCostInr.roundToInt()}",
-                  style = MaterialTheme.typography.titleMedium,
-                  fontWeight = FontWeight.SemiBold,
-                  color = MaterialTheme.colorScheme.primary,
-                )
+          item {
+            ZenCard(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+              Column {
+                monthEndSummary.employeePayrolls.forEachIndexed { idx, row ->
+                  Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                      Surface(
+                        color = ChaiCream,
+                        shape = CircleShape,
+                        modifier = Modifier.size(34.dp),
+                      ) {
+                        Box(contentAlignment = Alignment.Center) {
+                          Text(
+                            text = row.member.displayName.take(1).uppercase(),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = ChaiTerracotta,
+                          )
+                        }
+                      }
+                      Text(row.member.displayName, style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text(
+                      text = "${row.teaCups} cups · ₹${row.teaEstimatedCostInr.roundToInt()}",
+                      style = MaterialTheme.typography.titleMedium,
+                      fontFamily = MonoFontFamily,
+                      fontWeight = FontWeight.Bold,
+                      color = MaterialTheme.colorScheme.primary,
+                    )
+                  }
+                  if (idx < monthEndSummary.employeePayrolls.lastIndex) {
+                    HorizontalDivider(
+                      color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                      thickness = 0.75.dp,
+                    )
+                  }
+                }
               }
             }
           }
         }
 
-        // Recent Tea Logs & Purchases
-        item { SectionHeader(title = "Recent Tea Logs") }
+        item {
+          SectionHeader(
+            title = "Recent Tea Logs",
+            trailingBadge = "${teaLogs.take(15).size} recent",
+          )
+        }
         items(teaLogs.take(15), key = { it.id }) { log ->
-          Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(14.dp),
+          val isTea = log.item.lowercase() == "tea"
+          ZenCard(
+            cornerRadius = 16.dp,
             modifier = Modifier.fillMaxWidth(),
           ) {
             Row(
@@ -323,13 +444,41 @@ fun ChaiDocsScreen(
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically,
             ) {
-              Column {
-                Text("${log.userName} · ${log.item.uppercase()}", style = MaterialTheme.typography.titleMedium)
-                Text(log.dateKey, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                Surface(
+                  color = if (isTea) ChaiCream else EspressoBg,
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier.size(36.dp),
+                ) {
+                  Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                      imageVector = if (isTea) Icons.Rounded.Coffee else Icons.Rounded.LocalCafe,
+                      contentDescription = null,
+                      tint = if (isTea) ChaiTerracotta else EspressoBrown,
+                      modifier = Modifier.size(18.dp),
+                    )
+                  }
+                }
+                Column {
+                  Text("${log.userName} · ${log.item.uppercase()}", style = MaterialTheme.typography.titleMedium)
+                  Text(
+                    text = log.dateKey,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = MonoFontFamily,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
               }
               if (log.userId == me?.userId || isManagerOrOwner) {
                 IconButton(onClick = { onDeleteTeaLog(log.id) }) {
-                  Icon(Icons.Rounded.Delete, contentDescription = "Undo log")
+                  Icon(
+                    Icons.Rounded.Delete,
+                    contentDescription = "Undo log",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
                 }
               }
             }
@@ -337,25 +486,36 @@ fun ChaiDocsScreen(
         }
 
         if (teaPurchases.isNotEmpty()) {
-          item { SectionHeader(title = "Pantry Purchases") }
+          item { SectionHeader(title = "Pantry Purchases", trailingBadge = "${teaPurchases.take(15).size}") }
           items(teaPurchases.take(15), key = { it.id }) { pur ->
-            Card(
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-              shape = RoundedCornerShape(14.dp),
+            ZenCard(
+              cornerRadius = 16.dp,
               modifier = Modifier.fillMaxWidth(),
             ) {
               Row(
                 modifier = Modifier.padding(14.dp).fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
               ) {
                 Column {
                   Text(
-                    "${pur.category.replace("_", " ").uppercase()} (${pur.quantityLabel})",
+                    text = "${pur.category.replace("_", " ").uppercase()} (${pur.quantityLabel})",
                     style = MaterialTheme.typography.titleMedium,
                   )
-                  Text("${pur.dateKey} · ${pur.addedByName}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  Text(
+                    text = "${pur.dateKey} · ${pur.addedByName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = MonoFontFamily,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
                 }
-                Text("₹${pur.amountInr.roundToInt()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                  text = "₹${pur.amountInr.roundToInt()}",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontFamily = MonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  color = ChaiTerracotta,
+                )
               }
             }
           }
@@ -366,12 +526,12 @@ fun ChaiDocsScreen(
           Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
               onClick = { showAddDocDialog = true },
-              modifier = Modifier.fillMaxWidth().height(56.dp).testTag("add_document_button"),
+              modifier = Modifier.fillMaxWidth().height(54.dp).testTag("add_document_button"),
               shape = RoundedCornerShape(16.dp),
             ) {
               Icon(Icons.Rounded.Add, contentDescription = null)
               Spacer(Modifier.width(8.dp))
-              Text(strings.addDocument, style = MaterialTheme.typography.titleMedium)
+              Text(strings.addDocument, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
 
             OutlinedTextField(
@@ -380,6 +540,13 @@ fun ChaiDocsScreen(
               placeholder = { Text("Search serial no, sender/receiver, subject...") },
               leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
               singleLine = true,
+              shape = RoundedCornerShape(14.dp),
+              colors =
+                OutlinedTextFieldDefaults.colors(
+                  focusedContainerColor = MaterialTheme.colorScheme.surface,
+                  unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                  unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+                ),
               modifier = Modifier.fillMaxWidth().testTag("document_search_input"),
             )
 
@@ -416,10 +583,11 @@ fun ChaiDocsScreen(
           }
         } else {
           items(filteredDocs, key = { it.id }) { doc ->
-            Card(
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-              shape = RoundedCornerShape(18.dp),
-              modifier = Modifier.fillMaxWidth().clickable { previewScanDoc = doc },
+            val isInward = doc.direction == "inward"
+            ZenCard(
+              cornerRadius = 18.dp,
+              onClick = { previewScanDoc = doc },
+              modifier = Modifier.fillMaxWidth(),
             ) {
               Row(
                 modifier = Modifier.padding(14.dp),
@@ -431,26 +599,66 @@ fun ChaiDocsScreen(
                   Image(
                     bitmap = thumb.asImageBitmap(),
                     contentDescription = "Document scan thumbnail",
-                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
+                    modifier =
+                      Modifier.size(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(0.75.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
                     contentScale = ContentScale.Crop,
                   )
+                } else {
+                  Surface(
+                    color = if (isInward) LedgerIndigoBg else ChaiCream,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.size(48.dp),
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      Icon(
+                        Icons.Rounded.Description,
+                        contentDescription = null,
+                        tint = if (isInward) LedgerIndigo else ChaiTerracotta,
+                      )
+                    }
+                  }
                 }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                   Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                   ) {
-                    Text(doc.serialNo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                      Text(
+                        text = doc.serialNo,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = MonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                      )
+                      StatusPill(
+                        text = doc.direction.uppercase(),
+                        containerColor = if (isInward) LedgerIndigoBg else ChaiCream,
+                        contentColor = if (isInward) LedgerIndigo else ChaiInk,
+                      )
+                    }
                     StatusPill(
                       text = doc.status.uppercase(),
                       containerColor = if (doc.status == "pending") StatusAmberBg else StatusGreenBg,
                       contentColor = if (doc.status == "pending") StatusAmber else StatusGreen,
                     )
                   }
-                  Text(doc.subject, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                   Text(
-                    "${doc.direction.uppercase()} · ${doc.partyName} · ${doc.dateKey}",
+                    text = doc.subject,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                  Text(
+                    text = "${doc.partyName} · ${doc.dateKey}",
                     style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = MonoFontFamily,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
                 }
@@ -475,7 +683,8 @@ private fun AddPurchaseDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Add Pantry Purchase") },
+    shape = RoundedCornerShape(24.dp),
+    title = { Text("Add Pantry Purchase", style = MaterialTheme.typography.titleLarge) },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -493,6 +702,7 @@ private fun AddPurchaseDialog(
           onValueChange = { qtyLabel = it },
           label = { Text("Quantity (e.g. 2 Litre, 1 kg)") },
           singleLine = true,
+          shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -500,6 +710,7 @@ private fun AddPurchaseDialog(
           onValueChange = { amountText = it },
           label = { Text("Amount Paid (₹)") },
           singleLine = true,
+          shape = RoundedCornerShape(14.dp),
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
           modifier = Modifier.fillMaxWidth(),
         )
@@ -507,12 +718,14 @@ private fun AddPurchaseDialog(
           value = note,
           onValueChange = { note = it },
           label = { Text("Vendor / Note (optional)") },
+          shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth(),
         )
       }
     },
     confirmButton = {
       Button(
+        shape = RoundedCornerShape(14.dp),
         onClick = {
           val amt = amountText.toDoubleOrNull() ?: 0.0
           if (amt > 0.0 && qtyLabel.isNotBlank()) onSave(category, qtyLabel, amt, note)
@@ -540,7 +753,6 @@ private fun AddDocumentDialog(
   var scanBase64 by remember { mutableStateOf("") }
   var showCamera by remember { mutableStateOf(false) }
 
-  // Zero-permission Android Photo Picker (Google Play compliant)
   val photoPickerLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
       if (uri != null) {
@@ -558,7 +770,13 @@ private fun AddDocumentDialog(
       title = "Scan Document",
       useFrontCamera = false,
       onCaptured = { bmp ->
-        scanBase64 = LocationAndImageHelper.bitmapToBase64(bmp, maxDimension = 640, quality = 70)
+        scanBase64 =
+          LocationAndImageHelper.bitmapToBoundedBase64(
+            bitmap = bmp,
+            maxDimension = 640,
+            initialQuality = 70,
+            maxBase64Chars = LocationAndImageHelper.MAX_FIRESTORE_DOC_SCAN_B64_CHARS,
+          )
         showCamera = false
       },
       onDismiss = { showCamera = false },
@@ -567,7 +785,8 @@ private fun AddDocumentDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("New Register Entry") },
+    shape = RoundedCornerShape(24.dp),
+    title = { Text("New Register Entry", style = MaterialTheme.typography.titleLarge) },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -593,6 +812,7 @@ private fun AddDocumentDialog(
           onValueChange = { party = it },
           label = { Text(if (direction == "inward") "Sender Name" else "Receiver Name") },
           singleLine = true,
+          shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -600,6 +820,7 @@ private fun AddDocumentDialog(
           onValueChange = { subject = it },
           label = { Text("Subject / Document Title") },
           singleLine = true,
+          shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -611,6 +832,7 @@ private fun AddDocumentDialog(
               if (ok) showCamera = true
               else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             },
+            shape = RoundedCornerShape(14.dp),
             modifier = Modifier.weight(1f),
           ) {
             Icon(Icons.Rounded.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -623,6 +845,7 @@ private fun AddDocumentDialog(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
               )
             },
+            shape = RoundedCornerShape(14.dp),
             modifier = Modifier.weight(1f),
           ) {
             Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -637,12 +860,14 @@ private fun AddDocumentDialog(
           value = note,
           onValueChange = { note = it },
           label = { Text("Remarks (optional)") },
+          shape = RoundedCornerShape(14.dp),
           modifier = Modifier.fillMaxWidth(),
         )
       }
     },
     confirmButton = {
       Button(
+        shape = RoundedCornerShape(14.dp),
         onClick = { onSave(direction, party, subject, status, scanBase64, note) },
         enabled = party.isNotBlank() && subject.isNotBlank(),
       ) {
