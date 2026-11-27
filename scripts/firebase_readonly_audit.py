@@ -113,10 +113,22 @@ def main() -> int:
 
     rules_base = "https://firebaserules.googleapis.com/v1"
     try:
-        releases_payload = get_json(
-            f"{rules_base}/projects/{urllib.parse.quote(PROJECT, safe='')}/releases"
-        )
-        releases = releases_payload.get("releases", [])
+        # Firebase Rules list is paginated (pageSize <= 100). Read every page
+        # so a release on a later page is not incorrectly reported as missing.
+        releases = []
+        page_token = None
+        while True:
+            releases_url = (
+                f"{rules_base}/projects/{urllib.parse.quote(PROJECT, safe='')}/releases"
+                "?pageSize=100"
+            )
+            if page_token:
+                releases_url += "&pageToken=" + urllib.parse.quote(page_token, safe="")
+            releases_payload = get_json(releases_url)
+            releases.extend(releases_payload.get("releases", []))
+            page_token = releases_payload.get("nextPageToken")
+            if not page_token:
+                break
         for db_id in DATABASE_IDS:
             matches = [
                 item for item in releases
