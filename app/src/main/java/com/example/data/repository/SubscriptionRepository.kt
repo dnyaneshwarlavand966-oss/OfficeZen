@@ -60,20 +60,29 @@ class SubscriptionRepository(
   }
 
   /**
-   * Stub for Firebase Cloud Functions backend verification (Phase 4 / Phase 5).
-   * Verifies Google Play purchase token and purchase status securely on the server.
+   * Fail closed until the Firebase Functions verifier is implemented.
+   * A client must never activate a paid entitlement from an unverified Play token.
    */
   suspend fun verifyPurchaseOnBackend(purchaseToken: String, productId: String): Result<Boolean> {
-    // TODO: Implement actual Firebase Functions call in Phase 4/5
-    return Result.success(true)
+    if (purchaseToken.isBlank() || productId.isBlank()) {
+      return Result.failure(IllegalArgumentException("Purchase token and product ID are required"))
+    }
+    return Result.failure(
+      IllegalStateException("Server-side Google Play purchase verification is not configured; subscription was not activated."),
+    )
   }
 
   /**
-   * Stub for server-authoritative trial activation via Firebase Cloud Functions (Phase 4).
+   * Fail closed until trial eligibility and activation are enforced by a trusted backend.
+   * Local device state can be reset and must not be treated as authoritative trial history.
    */
   suspend fun requestServerAuthoritativeTrial(officeId: String, ownerUid: String): Result<OfficeSubscription> {
-    val sub = initializeTrialIfEligible(officeId, ownerUid)
-    return Result.success(sub)
+    if (officeId.isBlank() || ownerUid.isBlank()) {
+      return Result.failure(IllegalArgumentException("Office and owner identifiers are required"))
+    }
+    return Result.failure(
+      IllegalStateException("Server-side trial verification is not configured; trial was not activated."),
+    )
   }
 }
 
