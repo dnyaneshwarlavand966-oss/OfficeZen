@@ -34,7 +34,7 @@ data class Office(
   val strictGeofenceBlock: Boolean = false,
   val shiftStartMinutes: Long = 570L, // 09:30
   val shiftEndMinutes: Long = 1110L, // 18:30
-  val lateGraceMinutes: Long = 15L,
+  val lateGraceMinutes: Long = 60L, // 10:30 AM cutoff for the default 09:30 shift
   val lateMarksPerHalfDay: Long = 3L,
   val workingDaysPerMonth: Long = 26L,
   val monthEndReportDay: Long = 30L,
