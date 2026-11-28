@@ -67,6 +67,30 @@ object NotificationHelper {
         .build()
     NotificationManagerCompat.from(context).notify(id, notification)
   }
+
+  private fun scheduleDailyAlarm(
+    alarmManager: AlarmManager,
+    pendingIntent: PendingIntent,
+    hour: Int,
+    minute: Int,
+  ) {
+    val nextTrigger =
+      Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        if (timeInMillis <= System.currentTimeMillis()) {
+          add(Calendar.DAY_OF_MONTH, 1)
+        }
+      }
+    alarmManager.setInexactRepeating(
+      AlarmManager.RTC_WAKEUP,
+      nextTrigger.timeInMillis,
+      AlarmManager.INTERVAL_DAY,
+      pendingIntent,
+    )
+  }
 }
 
 class ReminderReceiver : BroadcastReceiver() {
@@ -75,11 +99,13 @@ class ReminderReceiver : BroadcastReceiver() {
     val title =
       when (type) {
         TYPE_MONTH_END -> "OfficeZen: Month-End Report Ready"
+        TYPE_PENDING_ATTENDANCE -> "OfficeZen: Attendance Check"
         else -> "OfficeZen: Good Morning Check-In"
       }
     val body =
       when (type) {
         TYPE_MONTH_END -> "Review this month's salary total, attendance summary & chai expenses and share via WhatsApp/Email."
+        TYPE_PENDING_ATTENDANCE -> "Check whether any team member's attendance is still pending. Complete or review today's attendance."
         else -> "Tap to complete your selfie attendance check-in for today."
       }
     NotificationHelper.showNotification(context, type.hashCode(), title, body)
@@ -89,6 +115,7 @@ class ReminderReceiver : BroadcastReceiver() {
     const val EXTRA_TYPE = "reminder_type"
     const val TYPE_CHECK_IN = "check_in"
     const val TYPE_MONTH_END = "month_end"
+    const val TYPE_PENDING_ATTENDANCE = "pending_attendance"
   }
 }
 
@@ -110,25 +137,26 @@ object ReminderScheduler {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 
+    val pendingAttendanceIntent =
+      Intent(context, ReminderReceiver::class.java).putExtra(
+        ReminderReceiver.EXTRA_TYPE,
+        ReminderReceiver.TYPE_PENDING_ATTENDANCE,
+      )
+    val pendingAttendancePending =
+      PendingIntent.getBroadcast(
+        context,
+        102,
+        pendingAttendanceIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      )
+
     if (!enabled) {
       alarmManager.cancel(checkInPending)
+      alarmManager.cancel(pendingAttendancePending)
       return
     }
 
-    val nextCheckIn =
-      Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 9)
-        set(Calendar.MINUTE, 15)
-        set(Calendar.SECOND, 0)
-        if (timeInMillis <= System.currentTimeMillis()) {
-          add(Calendar.DAY_OF_MONTH, 1)
-        }
-      }
-    alarmManager.setInexactRepeating(
-      AlarmManager.RTC_WAKEUP,
-      nextCheckIn.timeInMillis,
-      AlarmManager.INTERVAL_DAY,
-      checkInPending,
-    )
+    scheduleDailyAlarm(alarmManager, checkInPending, hour = 9, minute = 15)
+    scheduleDailyAlarm(alarmManager, pendingAttendancePending, hour = 17, minute = 0)
   }
 }
