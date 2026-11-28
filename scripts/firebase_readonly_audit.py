@@ -51,7 +51,7 @@ def analyze_rules(source_text: str) -> dict:
     patterns = {
         "unconditional_allow_true": r"\ballow\s+(?:read|write|create|update|delete)(?:\s*,\s*(?:read|write|create|update|delete))*\s*:\s*if\s+true\b",
         "unauthenticated_access_check": r"request\.auth\s*==\s*null",
-        "broad_authenticated_access": r"allow\s+(?:read|write)\s*:\s*if\s+request\.auth\s*!=\s*null",
+        "broad_authenticated_access": r"allow\s+(?:read|write)(?:\s*,\s*(?:read|write))*\s*:\s*if\s+request\.auth\s*!=\s*null",
     }
     flags = [name for name, pattern in patterns.items()
              if re.search(pattern, source_text, flags=re.IGNORECASE)]
