@@ -1,0 +1,8 @@
+title: OfficeZen Firebase Read-Only Auditor
+description: Minimal permissions to list Firestore databases, read database metadata, list published Firebase Rules releases, and read Ruleset source. No document or write permissions.
+stage: GA
+includedPermissions:
+  - datastore.databases.list
+  - datastore.databases.getMetadata
+  - firebaserules.releases.list
+  - firebaserules.rulesets.get
