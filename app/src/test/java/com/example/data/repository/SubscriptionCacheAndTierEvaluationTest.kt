@@ -226,4 +226,27 @@ class SubscriptionCacheAndTierEvaluationTest {
     assertFalse(docsList.isEmpty())
     assertEquals("DOC-001", docsList[0].serialNo)
   }
+
+  @Test
+  fun serverAuthoritativeTrialFailsClosedAndDoesNotPersistLocalEntitlement() = runBlocking {
+    val repository = SubscriptionRepository(db.subscriptionDao())
+
+    val result = repository.requestServerAuthoritativeTrial("off_1", "owner_1")
+
+    assertTrue(result.isFailure)
+    assertEquals(null, db.subscriptionDao().getSubscription("off_1"))
+    assertEquals(PlanTier.FREE, FeatureAccessManager.evaluateTier(null))
+  }
+
+  @Test
+  fun purchaseVerificationFailsClosedAndDoesNotPersistPaymentOrEntitlement() = runBlocking {
+    val repository = SubscriptionRepository(db.subscriptionDao())
+
+    val result = repository.verifyPurchaseOnBackend("unverified-token", "officezen_business_monthly")
+
+    assertTrue(result.isFailure)
+    assertEquals(null, db.subscriptionDao().getSubscription("off_1"))
+    assertTrue(db.subscriptionDao().observePaymentHistory("off_1").first().isEmpty())
+  }
+
 }
