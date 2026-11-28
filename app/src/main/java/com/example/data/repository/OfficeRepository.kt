@@ -319,6 +319,7 @@ class OfficeRepository(
     actorName: String,
     actorRole: MemberRole,
   ): Result<Member> = runCatching {
+    require(actorRole == MemberRole.OWNER) { "Only the Owner can add staff or set payroll details." }
     val safeName = displayName.trim().take(100)
     require(safeName.isNotEmpty()) { "Please enter staff member name." }
     val now = System.currentTimeMillis()
@@ -415,6 +416,7 @@ class OfficeRepository(
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
+    require(actorRole == MemberRole.OWNER) { "Only the Owner can change staff roles or payroll details." }
     val now = System.currentTimeMillis()
     dao.upsertMember(
       member.copy(
@@ -600,6 +602,8 @@ class OfficeRepository(
     actorName: String,
     actorRole: MemberRole,
   ): Result<String> = runCatching {
+    require(actorRole == MemberRole.OWNER) { "Only the Owner can add payroll adjustments." }
+    require(amountInr.isFinite() && amountInr > 0.0) { "Enter a valid positive adjustment amount." }
     val now = System.currentTimeMillis()
     val docId = "adj_${UUID.randomUUID().toString().replace("-", "").take(14)}"
     val adj =
