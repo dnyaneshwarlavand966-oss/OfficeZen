@@ -37,28 +37,6 @@ class SubscriptionRepository(
     dao.insertPaymentTransaction(transaction.toEntity())
   }
 
-  suspend fun initializeTrialIfEligible(officeId: String, ownerUid: String): OfficeSubscription {
-    val existing = dao.getSubscription(officeId)?.toDomain()
-    if (existing != null) return existing
-
-    val now = System.currentTimeMillis()
-    val trialDurationMs = 7L * 24L * 60L * 60L * 1000L // 7 Days
-    val trialSub =
-      OfficeSubscription(
-        officeId = officeId,
-        planId = PlanTier.BUSINESS.wire, // 7 days Business trial
-        status = "trialing",
-        trialStartAtEpochMs = now,
-        trialEndAtEpochMs = now + trialDurationMs,
-        startAtEpochMs = now,
-        expiryAtEpochMs = now + trialDurationMs,
-        lastVerifiedAtEpochMs = now,
-        updatedAtEpochMs = now,
-      )
-    dao.upsertSubscription(trialSub.toEntity())
-    return trialSub
-  }
-
   /**
    * Fail closed until the Firebase Functions verifier is implemented.
    * A client must never activate a paid entitlement from an unverified Play token.
