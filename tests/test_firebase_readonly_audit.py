@@ -139,6 +139,13 @@ class ReadOnlyAuditorTests(unittest.TestCase):
         )
         self.assertEqual(result["heuristic_flags"], [])
 
+    def test_rules_analyzer_flags_broad_combined_authenticated_access(self):
+        result = audit.analyze_rules(
+            "match /databases/{database}/documents { "
+            "allow read, write: if request.auth != null; }"
+        )
+        self.assertIn("broad_authenticated_access", result["heuristic_flags"])
+
 
 if __name__ == "__main__":
     unittest.main()
