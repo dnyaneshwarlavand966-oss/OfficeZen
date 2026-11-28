@@ -315,4 +315,57 @@ class OfficeRepositoryLocalTest {
     repo.joinLocalOfficeByInviteCode(uid, office.inviteCode, "Owner", "", "Owner").getOrThrow()
     assertEquals(office.id, repo.observeUserProfile(uid).first()?.activeOfficeId)
   }
+
+  @Test
+  fun ownerCanAssignAccountantButAccountantCannotChangePayroll() = runTest {
+    val uid = OfficeRepository.LOCAL_DEFAULT_USER_ID
+    val office = repo.createOffice(
+      uid = uid,
+      officeName = "Accountant Role Test",
+      ownerDisplayName = "Owner",
+      ownerEmail = "",
+      ownerPhone = "",
+      officeLat = 0.0,
+      officeLng = 0.0,
+      geofenceRadiusMeters = 150L,
+      shiftStartMinutes = 570L,
+      shiftEndMinutes = 1110L,
+      lateGraceMinutes = 60L,
+      workingDaysPerMonth = 26L,
+    ).getOrThrow()
+
+    val accountant = repo.addLocalMember(
+      officeId = office.id,
+      ownerId = office.ownerId,
+      displayName = "Assigned Accountant",
+      designation = "Accounts",
+      role = MemberRole.ACCOUNTANT,
+      monthlySalaryInr = 25000.0,
+      overtimeHourlyRateInr = 0.0,
+      phone = "",
+      actorUid = uid,
+      actorName = "Owner",
+      actorRole = MemberRole.OWNER,
+    ).getOrThrow()
+
+    assertEquals(MemberRole.ACCOUNTANT, accountant.roleEnum)
+    assertTrue(accountant.roleEnum.canViewTeamPayroll())
+    assertTrue(!accountant.roleEnum.canManageTeamPayroll())
+
+    val blockedAdjustment = repo.addSalaryAdjustment(
+      officeId = office.id,
+      targetUserId = accountant.userId,
+      targetUserName = accountant.displayName,
+      monthKey = "2026-11",
+      type = "bonus",
+      amountInr = 100.0,
+      note = "Must be owner approved",
+      actorUid = accountant.userId,
+      actorName = accountant.displayName,
+      actorRole = MemberRole.ACCOUNTANT,
+    )
+    assertTrue(blockedAdjustment.isFailure)
+    assertTrue(repo.observeSalaryAdjustments(office.id).first().isEmpty())
+  }
+
 }
