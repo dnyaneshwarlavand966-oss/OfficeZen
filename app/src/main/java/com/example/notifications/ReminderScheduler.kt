@@ -159,4 +159,28 @@ object ReminderScheduler {
     scheduleDailyAlarm(alarmManager, checkInPending, hour = 9, minute = 15)
     scheduleDailyAlarm(alarmManager, pendingAttendancePending, hour = 17, minute = 0)
   }
+
+  private fun scheduleDailyAlarm(
+    alarmManager: AlarmManager,
+    pendingIntent: PendingIntent,
+    hour: Int,
+    minute: Int,
+  ) {
+    val nextTrigger =
+      Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        if (timeInMillis <= System.currentTimeMillis()) {
+          add(Calendar.DAY_OF_MONTH, 1)
+        }
+      }
+    alarmManager.setInexactRepeating(
+      AlarmManager.RTC_WAKEUP,
+      nextTrigger.timeInMillis,
+      AlarmManager.INTERVAL_DAY,
+      pendingIntent,
+    )
+  }
 }
