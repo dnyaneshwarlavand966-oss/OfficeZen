@@ -80,6 +80,57 @@ class OfficeRepositoryLocalTest {
   }
 
   @Test
+  fun nonOwnerCannotAddStaffOrChangePayrollAdjustments() = runTest {
+    val uid = OfficeRepository.LOCAL_DEFAULT_USER_ID
+    val office =
+      repo.createOffice(
+        uid = uid,
+        officeName = "Security Test Office",
+        ownerDisplayName = "Owner",
+        ownerEmail = "",
+        ownerPhone = "",
+        officeLat = 0.0,
+        officeLng = 0.0,
+        geofenceRadiusMeters = 150L,
+        shiftStartMinutes = 570L,
+        shiftEndMinutes = 1110L,
+        lateGraceMinutes = 60L,
+        workingDaysPerMonth = 26L,
+      ).getOrThrow()
+
+    val addStaff = repo.addLocalMember(
+      officeId = office.id,
+      ownerId = office.ownerId,
+      displayName = "Blocked Staff",
+      designation = "Staff",
+      role = MemberRole.EMPLOYEE,
+      monthlySalaryInr = 1000.0,
+      overtimeHourlyRateInr = 0.0,
+      phone = "",
+      actorUid = "manager",
+      actorName = "Manager",
+      actorRole = MemberRole.MANAGER,
+    )
+    assertTrue(addStaff.isFailure)
+    assertTrue(repo.observeMembers(office.id).first().none { it.displayName == "Blocked Staff" })
+
+    val adjustment = repo.addSalaryAdjustment(
+      officeId = office.id,
+      targetUserId = uid,
+      targetUserName = "Owner",
+      monthKey = "2026-11",
+      type = "bonus",
+      amountInr = 500.0,
+      note = "Unauthorized",
+      actorUid = "manager",
+      actorName = "Manager",
+      actorRole = MemberRole.MANAGER,
+    )
+    assertTrue(adjustment.isFailure)
+    assertTrue(repo.observeSalaryAdjustments(office.id).first().isEmpty())
+  }
+
+  @Test
   fun localStaffPayrollTeaDocsAndAttendance_endToEnd() = runTest {
     val uid = OfficeRepository.LOCAL_DEFAULT_USER_ID
     val office =
