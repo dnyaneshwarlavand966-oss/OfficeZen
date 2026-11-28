@@ -565,6 +565,9 @@ class OfficeRepository(
     actorName: String,
     actorRole: MemberRole,
   ): Result<Unit> = runCatching {
+    require(actorRole == MemberRole.OWNER || actorRole == MemberRole.MANAGER) {
+      "Only an Owner or Manager can review leave requests."
+    }
     val nextStatus = if (approved) "approved" else "rejected"
     dao.upsertLeave(
       leave.copy(

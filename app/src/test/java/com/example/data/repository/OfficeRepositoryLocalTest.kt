@@ -174,6 +174,11 @@ class OfficeRepositoryLocalTest {
         )
         .getOrThrow()
     val savedLeave = repo.observeLeaves(office.id).first().first { it.id == leaveId }
+    val employeeReview =
+      repo.reviewLeave(office.id, savedLeave, true, "Not allowed", staff.userId, staff.displayName, MemberRole.EMPLOYEE)
+    assertTrue(employeeReview.isFailure)
+    assertEquals("pending", repo.observeLeaves(office.id).first().first().status)
+
     repo.reviewLeave(office.id, savedLeave, true, "Approved", uid, "Owner", MemberRole.OWNER).getOrThrow()
     assertEquals("approved", repo.observeLeaves(office.id).first().first().status)
 
