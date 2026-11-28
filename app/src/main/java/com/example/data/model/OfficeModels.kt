@@ -12,6 +12,11 @@ enum class MemberRole(val wire: String) {
   }
 }
 
+/** Team-wide payroll is restricted to the Owner until a separately assigned Accountant role
+ * and server-side authorization are implemented. Managers may only see their own payslip.
+ */
+fun MemberRole.canViewTeamPayroll(): Boolean = this == MemberRole.OWNER
+
 data class UserProfile(
   val id: String = "",
   val userId: String = "",

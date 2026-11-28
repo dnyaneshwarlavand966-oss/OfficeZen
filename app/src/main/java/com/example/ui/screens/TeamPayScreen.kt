@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.Member
 import com.example.data.model.MemberRole
+import com.example.data.model.canViewTeamPayroll
 import com.example.data.model.Office
 import com.example.data.model.PayrollProfile
 import com.example.domain.EmployeePayrollSummary
@@ -122,7 +123,7 @@ fun TeamPayScreen(
   val strings = LocalAppStrings.current
   val context = LocalContext.current
   val isOwner = me?.roleEnum == MemberRole.OWNER
-  val isManagerOrOwner = isOwner || me?.roleEnum == MemberRole.MANAGER
+  val isPayrollAdmin = me?.roleEnum?.canViewTeamPayroll() == true
   val profilesMap = remember(profiles) { profiles.associateBy { it.userId } }
 
   var editingMember by remember { mutableStateOf<Member?>(null) }
@@ -225,7 +226,7 @@ fun TeamPayScreen(
       }
 
       // Neo-Bank Treasury Payroll Card (Manager / Owner)
-      if (isManagerOrOwner && summary != null) {
+      if (isPayrollAdmin && summary != null) {
         item {
           Surface(
             color = PineDeep,
@@ -394,17 +395,17 @@ fun TeamPayScreen(
 
       val payrollRows =
         (summary?.employeePayrolls ?: emptyList()).let { list ->
-          if (isManagerOrOwner) list else list.filter { it.member.userId == me?.userId }
+          if (isPayrollAdmin) list else list.filter { it.member.userId == me?.userId }
         }
 
       item {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
           SectionHeader(
-            title = if (isManagerOrOwner) "Team & Monthly Payroll" else "My Salary & Payslip",
+            title = if (isPayrollAdmin) "Team & Monthly Payroll" else "My Salary & Payslip",
             subtitle = "3-late rule, leaves, overtime & advances",
             trailingBadge = "${payrollRows.size} staff",
           )
-          if (isManagerOrOwner) {
+          if (isPayrollAdmin) {
             Button(
               onClick = { showAddStaffDialog = true },
               shape = RoundedCornerShape(14.dp),
@@ -430,7 +431,7 @@ fun TeamPayScreen(
           PayrollMemberCard(
             row = row,
             isOwner = isOwner,
-            isManagerOrOwner = isManagerOrOwner,
+            isPayrollAdmin = isPayrollAdmin,
             onEdit = { editingMember = row.member },
             onAddAdjustment = { adjustmentMember = row.member },
             onGeneratePayslip = {
@@ -493,7 +494,7 @@ private fun TreasuryActionChip(
 private fun PayrollMemberCard(
   row: EmployeePayrollSummary,
   isOwner: Boolean,
-  isManagerOrOwner: Boolean,
+  isPayrollAdmin: Boolean,
   onEdit: () -> Unit,
   onAddAdjustment: () -> Unit,
   onGeneratePayslip: () -> Unit,
@@ -636,7 +637,7 @@ private fun PayrollMemberCard(
           )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (isManagerOrOwner) {
+          if (isPayrollAdmin) {
             OutlinedButton(
               onClick = onAddAdjustment,
               shape = RoundedCornerShape(12.dp),
