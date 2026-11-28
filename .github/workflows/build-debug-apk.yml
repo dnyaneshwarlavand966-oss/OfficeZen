@@ -163,9 +163,9 @@ jobs:
       - name: Build Debug APK
         run: |
           if [ -x ./gradlew ]; then
-            ./gradlew :app:processDebugGoogleServices :app:assembleDebug --no-daemon --stacktrace
+            ./gradlew :app:testDebugUnitTest :app:processDebugGoogleServices :app:assembleDebug --no-daemon --stacktrace
           else
-            gradle :app:processDebugGoogleServices :app:assembleDebug --no-daemon --stacktrace
+            gradle :app:testDebugUnitTest :app:processDebugGoogleServices :app:assembleDebug --no-daemon --stacktrace
           fi
 
       - name: Upload Debug APK artifact

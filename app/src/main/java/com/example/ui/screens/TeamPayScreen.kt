@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.Member
@@ -70,6 +71,7 @@ import com.example.data.model.MemberRole
 import com.example.data.model.canViewTeamPayroll
 import com.example.data.model.Office
 import com.example.data.model.PayrollProfile
+import com.example.security.PayrollPinManager
 import com.example.domain.EmployeePayrollSummary
 import com.example.domain.MonthEndSummary
 import com.example.export.PdfAndCsvExporter
@@ -129,6 +131,17 @@ fun TeamPayScreen(
   var editingMember by remember { mutableStateOf<Member?>(null) }
   var adjustmentMember by remember { mutableStateOf<Member?>(null) }
   var showAddStaffDialog by remember { mutableStateOf(false) }
+  var payrollPinUnlocked by remember(office.id, me?.userId) { mutableStateOf(false) }
+
+  // Team payroll is gated on this device. The PIN is protected by Android Keystore;
+  // cloud/server authorization must still be enforced before enabling remote payroll.
+  if (isPayrollAdmin && !payrollPinUnlocked) {
+    PayrollPinGate(
+      isOwner = isOwner,
+      onUnlocked = { payrollPinUnlocked = true },
+    )
+    return
+  }
 
   if (showAddStaffDialog) {
     AddStaffDialog(
@@ -698,7 +711,7 @@ private fun EditMemberPayDialog(
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (isOwner) {
           Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MemberRole.entries.forEach { role ->
+            (if (member.roleEnum == MemberRole.OWNER) listOf(MemberRole.OWNER) else listOf(MemberRole.EMPLOYEE, MemberRole.MANAGER, MemberRole.ACCOUNTANT)).forEach { role ->
               FilterChip(
                 selected = selectedRole == role,
                 onClick = { selectedRole = role },
@@ -880,7 +893,7 @@ private fun AddStaffDialog(
           modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          listOf(MemberRole.EMPLOYEE, MemberRole.MANAGER).forEach { role ->
+          listOf(MemberRole.EMPLOYEE, MemberRole.MANAGER, MemberRole.ACCOUNTANT).forEach { role ->
             FilterChip(
               selected = selectedRole == role,
               onClick = { selectedRole = role },
@@ -940,4 +953,119 @@ private fun AddStaffDialog(
       TextButton(onClick = onDismiss) { Text("Cancel") }
     },
   )
+}
+
+
+@Composable
+private fun PayrollPinGate(
+  isOwner: Boolean,
+  onUnlocked: () -> Unit,
+) {
+  val context = LocalContext.current
+  val manager = remember(context) { PayrollPinManager(context) }
+  var hasPin by remember(manager) { mutableStateOf(manager.hasPin()) }
+  var pin by remember { mutableStateOf("") }
+  var confirmPin by remember { mutableStateOf("") }
+  var error by remember { mutableStateOf("") }
+
+  Box(
+    modifier = Modifier.fillMaxSize().padding(20.dp),
+    contentAlignment = Alignment.Center,
+  ) {
+    Surface(
+      modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
+      shape = RoundedCornerShape(24.dp),
+      color = MaterialTheme.colorScheme.surface,
+      border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+      Column(
+        modifier = Modifier.padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+      ) {
+        Text(
+          text = if (hasPin) "Payroll PIN Required" else "Set Boss Payroll PIN",
+          style = MaterialTheme.typography.headlineSmall,
+          fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+          text = if (hasPin) {
+            "Enter the six-digit PIN set by the Office Owner to open team payroll."
+          } else if (isOwner) {
+            "Create a six-digit PIN. It is protected by this device's Android Keystore and is not stored as plain text."
+          } else {
+            "The Boss must set the Payroll PIN on this device before an assigned Accountant can open team payroll."
+          },
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (hasPin || isOwner) {
+          OutlinedTextField(
+            value = pin,
+            onValueChange = { pin = it.filter(Char::isDigit).take(6); error = "" },
+            label = { Text(if (hasPin) "Six-digit Payroll PIN" else "Create six-digit PIN") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            modifier = Modifier.fillMaxWidth().testTag("payroll_pin_input"),
+          )
+        }
+
+        if (!hasPin && isOwner) {
+          OutlinedTextField(
+            value = confirmPin,
+            onValueChange = { confirmPin = it.filter(Char::isDigit).take(6); error = "" },
+            label = { Text("Confirm PIN") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            modifier = Modifier.fillMaxWidth().testTag("payroll_pin_confirm_input"),
+          )
+        }
+
+        if (error.isNotBlank()) {
+          Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+
+        if (hasPin) {
+          Button(
+            onClick = {
+              if (manager.verifyPin(pin)) {
+                error = ""
+                onUnlocked()
+              } else {
+                error = "PIN चुकीचा आहे किंवा प्रयत्न तात्पुरते लॉक झाले आहेत."
+                pin = ""
+              }
+            },
+            enabled = PayrollPinManager.isValidPin(pin),
+            modifier = Modifier.fillMaxWidth().testTag("verify_payroll_pin_button"),
+          ) { Text("Unlock Payroll") }
+        } else if (isOwner) {
+          Button(
+            onClick = {
+              if (pin != confirmPin) {
+                error = "दोन्ही PIN जुळत नाहीत."
+              } else if (manager.setPin(pin)) {
+                hasPin = true
+                pin = ""
+                confirmPin = ""
+                onUnlocked()
+              } else {
+                error = "PIN सुरक्षितपणे सेव्ह करता आला नाही. पुन्हा प्रयत्न करा."
+              }
+            },
+            enabled = PayrollPinManager.isValidPin(pin) && pin == confirmPin,
+            modifier = Modifier.fillMaxWidth().testTag("set_payroll_pin_button"),
+          ) { Text("Set PIN & Continue") }
+        }
+
+        Text(
+          "टीप: हा PIN या डिव्हाइसवरील अतिरिक्त लॉक आहे. ऑनलाइन/क्लाउड Payroll साठी सर्व्हरवरील स्वतंत्र अधिकार तपासणी आवश्यक आहे.",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+  }
 }
