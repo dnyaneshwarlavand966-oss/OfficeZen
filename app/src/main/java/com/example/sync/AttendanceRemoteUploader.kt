@@ -173,7 +173,7 @@ class FirebaseAttendanceUploader(
           "strictGeofenceBlock" to (office?.strictGeofenceBlock ?: false),
           "shiftStartMinutes" to (office?.shiftStartMinutes ?: 570L).coerceIn(0L, 1439L),
           "shiftEndMinutes" to (office?.shiftEndMinutes ?: 1110L).coerceIn(0L, 1439L),
-          "lateGraceMinutes" to (office?.lateGraceMinutes ?: 15L).coerceIn(0L, 120L),
+          "lateGraceMinutes" to (office?.lateGraceMinutes ?: 60L).coerceIn(0L, 120L),
           "lateMarksPerHalfDay" to (office?.lateMarksPerHalfDay ?: 3L).coerceIn(1L, 10L),
           "workingDaysPerMonth" to (office?.workingDaysPerMonth ?: 26L).coerceIn(1L, 31L),
           "monthEndReportDay" to (office?.monthEndReportDay ?: 30L).coerceIn(1L, 31L),
