@@ -128,17 +128,17 @@ class PayrollAndGeofenceTest {
   @Test
   fun checkInStatus_computesOnTimeLateAndHalfDayBoundaries() {
     val shiftStart = 570L // 09:30 AM
-    val grace = 15L // 09:45 AM
+    val grace = 60L // 10:30 AM cutoff
 
     val (onTimeStatus, onTimeLateMins) =
-      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(585L, shiftStart, grace)
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(630L, shiftStart, grace)
     assertEquals("on_time", onTimeStatus)
     assertEquals(0L, onTimeLateMins)
 
     val (lateStatus, lateMins) =
-      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(586L, shiftStart, grace)
+      com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(631L, shiftStart, grace)
     assertEquals("late", lateStatus)
-    assertEquals(16L, lateMins)
+    assertEquals(61L, lateMins)
 
     val (edgeLateStatus, edgeLateMins) =
       com.example.ui.viewmodel.OfficeViewModel.computeCheckInStatusForMinutes(750L, shiftStart, grace)
