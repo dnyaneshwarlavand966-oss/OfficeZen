@@ -82,5 +82,63 @@ class ReadOnlyAuditorTests(unittest.TestCase):
         self.assertFalse(any("/documents" in url for url in requested))
 
 
+    def test_get_json_sends_get_with_bearer_token_only(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch.object(audit, "TOKEN", "unit-test-token"), patch.object(
+            audit.urllib.request, "urlopen", side_effect=fake_urlopen
+        ):
+            self.assertEqual(audit.get_json("https://example.invalid/read"), {"ok": True})
+
+        request = captured["request"]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Authorization"), "Bearer unit-test-token")
+        self.assertEqual(captured["timeout"], 25)
+
+    def test_get_json_fails_closed_without_token(self):
+        with patch.object(audit, "TOKEN", ""), patch.object(
+            audit.urllib.request, "urlopen"
+        ) as network:
+            with self.assertRaisesRegex(RuntimeError, "GCP_AUTH_TOKEN is missing"):
+                audit.get_json("https://example.invalid/read")
+            network.assert_not_called()
+
+    def test_http_error_does_not_expose_response_body(self):
+        import urllib.error
+
+        secret_body = b'private-project-response-content'
+        error = urllib.error.HTTPError(
+            "https://example.invalid/read", 403, "Forbidden", {}, None
+        )
+        with patch.object(audit, "TOKEN", "unit-test-token"), patch.object(
+            audit.urllib.request, "urlopen", side_effect=error
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                audit.get_json("https://example.invalid/read")
+        self.assertEqual(str(caught.exception), "HTTP 403")
+        self.assertNotIn(secret_body.decode(), str(caught.exception))
+
+    def test_rules_analyzer_returns_no_flags_for_closed_rule(self):
+        result = audit.analyze_rules(
+            "match /databases/{database}/documents { allow read, write: if false; }"
+        )
+        self.assertEqual(result["heuristic_flags"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
